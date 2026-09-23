@@ -30,7 +30,12 @@ import {
   User,
   LogOut,
   Plus,
-  Clipboard
+  Clipboard,
+  Share2,
+  Scissors,
+  Mic,
+  Music2,
+  FileAudio
 } from 'lucide-react';
 
 const API_BASE = '';
@@ -41,6 +46,120 @@ const THEMES = [
   { id: 'sunset', name: 'Sunset Studio', icon: '🌅' },
   { id: 'clean-light', name: 'Clean Light', icon: '☀️' },
 ];
+
+function WaveformStudio({ segments = [], currentTime = 0, duration = 30, onSeek }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width = canvas.parentElement?.clientWidth || 700;
+    const height = canvas.height = 90;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const dur = Math.max(1, duration || (segments.length > 0 ? segments[segments.length - 1].end : 30));
+
+    // Dark timeline background
+    ctx.fillStyle = 'rgba(8, 10, 15, 0.85)';
+    ctx.fillRect(0, 0, width, height);
+
+    // Time markers (grid lines)
+    const step = dur > 120 ? 30 : dur > 60 ? 15 : 5;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.font = '10px sans-serif';
+    for (let t = 0; t <= dur; t += step) {
+      const x = (t / dur) * width;
+      ctx.fillRect(x, 0, 1, height);
+      ctx.fillText(`${t}s`, x + 3, 14);
+    }
+
+    // Simulated amplitude bars with speech segment highlight
+    const barWidth = 3;
+    const barGap = 2;
+    const totalBars = Math.floor(width / (barWidth + barGap));
+
+    for (let b = 0; b < totalBars; b++) {
+      const x = b * (barWidth + barGap);
+      const barTime = (b / totalBars) * dur;
+
+      const activeSeg = segments.find(s => barTime >= s.start && barTime <= s.end);
+
+      let amp = 0.2;
+      if (activeSeg) {
+        const segDuration = Math.max(0.1, activeSeg.end - activeSeg.start);
+        const relTime = (barTime - activeSeg.start) / segDuration;
+        amp = 0.4 + 0.5 * Math.abs(Math.sin(relTime * Math.PI * 4 + b * 0.7));
+      } else {
+        amp = 0.08 + 0.05 * Math.sin(b * 0.3);
+      }
+
+      const barHeight = Math.max(4, amp * (height - 30));
+      const y = (height - barHeight) / 2;
+
+      if (activeSeg) {
+        const isSpeaker1 = (activeSeg.speaker_id === 1) || (activeSeg.speaker === 'Speaker 1') || !activeSeg.speaker_id;
+        ctx.fillStyle = isSpeaker1 ? '#06b6d4' : '#a855f7';
+      } else {
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
+      }
+
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(x, y, barWidth, barHeight, 2);
+        ctx.fill();
+      } else {
+        ctx.fillRect(x, y, barWidth, barHeight);
+      }
+    }
+
+    // Red playback needle
+    const playheadX = Math.min(width, Math.max(0, (currentTime / dur) * width));
+    ctx.fillStyle = '#f43f5e';
+    ctx.fillRect(playheadX - 1, 0, 2, height);
+
+    // Needle top handle
+    ctx.beginPath();
+    ctx.arc(playheadX, 6, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#f43f5e';
+    ctx.fill();
+  }, [segments, currentTime, duration]);
+
+  const handleCanvasClick = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !onSeek) return;
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const dur = Math.max(1, duration || (segments.length > 0 ? segments[segments.length - 1].end : 30));
+    const newTime = (clickX / rect.width) * dur;
+    onSeek(Math.max(0, Math.min(dur, newTime)));
+  };
+
+  return (
+    <div className="waveform-container">
+      <div className="waveform-header">
+        <span className="waveform-title">
+          <Volume2 size={15} color="var(--accent-cyan)" /> Interactive Audio Waveform Timeline
+        </span>
+        <div className="waveform-legend">
+          <span className="legend-item"><span className="legend-dot" style={{ background: '#06b6d4' }}></span> Speaker 1</span>
+          <span className="legend-item"><span className="legend-dot" style={{ background: '#a855f7' }}></span> Speaker 2</span>
+          <span className="legend-item"><span className="legend-dot" style={{ background: 'rgba(148, 163, 184, 0.3)' }}></span> Music/Ambience</span>
+        </div>
+      </div>
+      <canvas
+        ref={canvasRef}
+        className="waveform-canvas"
+        onClick={handleCanvasClick}
+        title="Click anywhere to jump playback time"
+      />
+      <div className="waveform-hint">
+        💡 Click anywhere on the waveform to seek video playback. Colored bars indicate dialogue segments and speaker turns.
+      </div>
+    </div>
+  );
+}
 
 const SIMPLE_STEPS = [
   { id: 'ingestion', label: '1. Video Source' },
@@ -101,6 +220,30 @@ export default function App() {
   const [burnSubtitles, setBurnSubtitles] = useState(false);
   const [protectedTerms, setProtectedTerms] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Multi-Speaker Voice Assignment states
+  const [enableMultiSpeaker, setEnableMultiSpeaker] = useState(false);
+  const [speaker1Gender, setSpeaker1Gender] = useState('female');
+  const [speaker2Gender, setSpeaker2Gender] = useState('male');
+
+  // AI Vocal Stripping & Music Isolation state
+  const [isolateVocals, setIsolateVocals] = useState(false);
+
+  // Waveform Studio Timeline & Video sync states
+  const mainVideoRef = useRef(null);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoPlayerDuration, setVideoPlayerDuration] = useState(0);
+
+  // Viral Shorts & Reels Auto-Clipper states
+  const [showShortsModal, setShowShortsModal] = useState(false);
+  const [shortsStartTime, setShortsStartTime] = useState(0);
+  const [shortsDuration, setShortsDuration] = useState(30);
+  const [isGeneratingShort, setIsGeneratingShort] = useState(false);
+  const [shortGeneratedUrl, setShortGeneratedUrl] = useState(null);
+  const [shortError, setShortError] = useState(null);
+
+  // Native Mobile Web Share feedback
+  const [shareCopied, setShareCopied] = useState(false);
 
   // Active Projects Queue & Selected Project
   const [activeJobId, setActiveJobId] = useState(null);
@@ -353,6 +496,16 @@ export default function App() {
       formData.append('enable_ducking', enableDucking);
       formData.append('ducking_volume', duckingVolume);
       formData.append('keep_original', keepOriginal);
+      formData.append('isolate_vocals', isolateVocals);
+      if (enableMultiSpeaker) {
+        const currentLang = languages[targetLang];
+        const s1Voice = currentLang?.voices?.[speaker1Gender]?.id || currentLang?.default_voice;
+        const s2Voice = currentLang?.voices?.[speaker2Gender]?.id || currentLang?.default_voice;
+        formData.append('voice_map', JSON.stringify({
+          'Speaker 1': s1Voice,
+          'Speaker 2': s2Voice,
+        }));
+      }
       if (currentUser?.id) {
         formData.append('user_id', currentUser.id);
       }
@@ -388,6 +541,54 @@ export default function App() {
       setErrorMessage(err.message);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Generate 9:16 Vertical Short with kinetic burned-in subtitles
+  const handleGenerateShort = async () => {
+    if (!activeJobId) return;
+    setIsGeneratingShort(true);
+    setShortError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${activeJobId}/generate-short`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          start_time: Number(shortsStartTime),
+          duration: Number(shortsDuration),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to generate vertical short.');
+      }
+      const data = await res.json();
+      setShortGeneratedUrl(`${API_BASE}${data.short_url}?t=${Date.now()}`);
+    } catch (err) {
+      setShortError(err.message);
+    } finally {
+      setIsGeneratingShort(false);
+    }
+  };
+
+  // Native Mobile Web Share API
+  const handleShareMobile = async () => {
+    if (!activeJobId) return;
+    const shareUrl = `${window.location.origin}/api/media/${activeJobId}/dubbed_video`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: jobData?.title || 'Dubbed Video',
+          text: `Watch this video dubbed with AI Dubber Studio!`,
+          url: shareUrl,
+        });
+      } catch (err) {
+        if (err.name !== 'AbortError') console.warn('Share error', err);
+      }
+    } else {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2500);
     }
   };
 
@@ -919,9 +1120,9 @@ export default function App() {
                 ))}
               </div>
 
-              {/* Voice Style (Female / Male) */}
+              {/* Voice Style (Single vs Multi-Speaker) */}
               <div className="input-label" style={{ marginBottom: '8px' }}>
-                <span>Voice Style</span>
+                <span>Voice Style & Speakers</span>
                 <button
                   type="button"
                   className="status-pill"
@@ -933,24 +1134,106 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="voice-selector">
-                <button
-                  type="button"
-                  className={`voice-btn ${voiceGender === 'female' ? 'selected' : ''}`}
-                  onClick={() => setVoiceGender('female')}
-                >
-                  <span>Female Voice</span>
-                  <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Natural</span>
-                </button>
-                <button
-                  type="button"
-                  className={`voice-btn ${voiceGender === 'male' ? 'selected' : ''}`}
-                  onClick={() => setVoiceGender('male')}
-                >
-                  <span>Male Voice</span>
-                  <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Deep</span>
-                </button>
+              {/* Multi-Speaker Dialogue Mode Switch */}
+              <div style={{
+                background: 'var(--bg-tertiary)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: '10px 14px',
+                marginBottom: '12px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Mic size={16} color="var(--accent-cyan)" />
+                  <div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Multi-Speaker Dialogue Mode
+                    </div>
+                    <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                      Assign distinct voices for two or more speakers in conversations
+                    </div>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={enableMultiSpeaker}
+                  onChange={(e) => setEnableMultiSpeaker(e.target.checked)}
+                  style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
+                />
               </div>
+
+              {enableMultiSpeaker ? (
+                <div className="speaker-matrix-grid">
+                  <div className="speaker-card">
+                    <div className="speaker-card-header">
+                      <span style={{ color: 'var(--accent-cyan)' }}>🎙️ Speaker 1 (Lead)</span>
+                    </div>
+                    <div className="voice-selector" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+                      <button
+                        type="button"
+                        className={`voice-btn ${speaker1Gender === 'female' ? 'selected' : ''}`}
+                        onClick={() => setSpeaker1Gender('female')}
+                        style={{ padding: '6px' }}
+                      >
+                        <span style={{ fontSize: '0.82rem' }}>Female</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`voice-btn ${speaker1Gender === 'male' ? 'selected' : ''}`}
+                        onClick={() => setSpeaker1Gender('male')}
+                        style={{ padding: '6px' }}
+                      >
+                        <span style={{ fontSize: '0.82rem' }}>Male</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="speaker-card">
+                    <div className="speaker-card-header">
+                      <span style={{ color: 'var(--accent-purple)' }}>🎙️ Speaker 2 (Co-Host)</span>
+                    </div>
+                    <div className="voice-selector" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+                      <button
+                        type="button"
+                        className={`voice-btn ${speaker2Gender === 'female' ? 'selected' : ''}`}
+                        onClick={() => setSpeaker2Gender('female')}
+                        style={{ padding: '6px' }}
+                      >
+                        <span style={{ fontSize: '0.82rem' }}>Female</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`voice-btn ${speaker2Gender === 'male' ? 'selected' : ''}`}
+                        onClick={() => setSpeaker2Gender('male')}
+                        style={{ padding: '6px' }}
+                      >
+                        <span style={{ fontSize: '0.82rem' }}>Male</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="voice-selector">
+                  <button
+                    type="button"
+                    className={`voice-btn ${voiceGender === 'female' ? 'selected' : ''}`}
+                    onClick={() => setVoiceGender('female')}
+                  >
+                    <span>Female Voice</span>
+                    <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Natural</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`voice-btn ${voiceGender === 'male' ? 'selected' : ''}`}
+                    onClick={() => setVoiceGender('male')}
+                  >
+                    <span>Male Voice</span>
+                    <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Deep</span>
+                  </button>
+                </div>
+              )}
 
               {/* More Settings Drawer */}
               <div style={{ marginTop: '16px' }}>
@@ -968,6 +1251,32 @@ export default function App() {
 
                 {showAdvanced && (
                   <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {/* Vocal Stripping & Background Music Isolation */}
+                    <div style={{
+                      background: 'rgba(6, 182, 212, 0.08)',
+                      border: '1px solid rgba(6, 182, 212, 0.25)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '12px 14px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.85rem', color: 'var(--accent-cyan)' }}>
+                          <Music2 size={16} /> AI Vocal Stripping & Background Music Isolation
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                          Cancels original speech to isolate background music and sound effects cleanly.
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={isolateVocals}
+                        onChange={(e) => setIsolateVocals(e.target.checked)}
+                        style={{ width: '18px', height: '18px', accentColor: 'var(--accent-cyan)' }}
+                      />
+                    </div>
+
                     {/* Burn Subtitles Toggle */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <label className="input-label" style={{ marginBottom: 0 }}>
@@ -1002,37 +1311,39 @@ export default function App() {
                     </div>
 
                     {/* Auto-lower background music */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <label className="input-label" style={{ marginBottom: 0 }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <Music size={15} color="var(--accent-cyan)" /> Auto-soften background music while speaking
-                          </span>
-                        </label>
-                        <input
-                          type="checkbox"
-                          checked={enableDucking}
-                          onChange={(e) => setEnableDucking(e.target.checked)}
-                          style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
-                        />
-                      </div>
-                      {enableDucking && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    {!isolateVocals && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <label className="input-label" style={{ marginBottom: 0 }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <Music size={15} color="var(--accent-cyan)" /> Auto-soften background music while speaking
+                            </span>
+                          </label>
                           <input
-                            type="range"
-                            min="0.05"
-                            max="0.4"
-                            step="0.05"
-                            value={duckingVolume}
-                            onChange={(e) => setDuckingVolume(parseFloat(e.target.value))}
-                            style={{ flex: 1, accentColor: 'var(--accent-cyan)' }}
+                            type="checkbox"
+                            checked={enableDucking}
+                            onChange={(e) => setEnableDucking(e.target.checked)}
+                            style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
                           />
-                          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', minWidth: '45px' }}>
-                            {Math.round(duckingVolume * 100)}%
-                          </span>
                         </div>
-                      )}
-                    </div>
+                        {enableDucking && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <input
+                              type="range"
+                              min="0.05"
+                              max="0.4"
+                              step="0.05"
+                              value={duckingVolume}
+                              onChange={(e) => setDuckingVolume(parseFloat(e.target.value))}
+                              style={{ flex: 1, accentColor: 'var(--accent-cyan)' }}
+                            />
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', minWidth: '45px' }}>
+                              {Math.round(duckingVolume * 100)}%
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Multi-audio track */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1247,36 +1558,132 @@ export default function App() {
 
                 <div className="player-container">
                   <video
+                    ref={mainVideoRef}
                     className="video-frame"
                     controls
                     src={`${API_BASE}/api/media/${jobData.id}/${activeVideoTrack === 'dubbed' ? 'dubbed_video' : 'source_video'}`}
                     key={activeVideoTrack}
+                    onTimeUpdate={(e) => setVideoCurrentTime(e.target.currentTime)}
+                    onLoadedMetadata={(e) => setVideoPlayerDuration(e.target.duration)}
                   />
 
-                  {/* Export Deck Buttons */}
-                  <div className="action-bar">
-                    <a
-                      href={`${API_BASE}/api/media/${jobData.id}/dubbed_video`}
-                      download
+                  {/* Interactive Visual Waveform Timeline Studio */}
+                  <WaveformStudio
+                    segments={editableSegments && editableSegments.length > 0 ? editableSegments : (jobData.segments || [])}
+                    currentTime={videoCurrentTime}
+                    duration={videoPlayerDuration || jobData.result?.duration || jobData.result?.video_duration || 30}
+                    onSeek={(time) => {
+                      if (mainVideoRef.current) {
+                        mainVideoRef.current.currentTime = time;
+                        mainVideoRef.current.play().catch(() => {});
+                      }
+                    }}
+                  />
+
+                  {/* Quick Action Bar: Shorts & Mobile Share */}
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
                       className="btn-primary"
-                      style={{ flex: 1 }}
+                      style={{
+                        flex: 1,
+                        background: 'linear-gradient(135deg, var(--accent-rose), var(--accent-purple))',
+                        boxShadow: '0 4px 15px rgba(244, 63, 94, 0.3)',
+                        gap: '8px'
+                      }}
+                      onClick={() => setShowShortsModal(true)}
                     >
-                      <Download size={18} /> Download Video
-                    </a>
-                    <a
-                      href={`${API_BASE}/api/media/${jobData.id}/subtitles`}
-                      download
+                      <Scissors size={18} /> ✨ Create 9:16 Short / Reel
+                    </button>
+
+                    <button
+                      type="button"
                       className="btn-secondary"
+                      style={{
+                        background: shareCopied ? 'var(--accent-emerald)' : 'var(--bg-tertiary)',
+                        color: shareCopied ? 'white' : 'var(--text-primary)',
+                        borderColor: shareCopied ? 'var(--accent-emerald)' : 'var(--border-subtle)',
+                        gap: '8px'
+                      }}
+                      onClick={handleShareMobile}
                     >
-                      <FileText size={16} /> Subtitles (.SRT)
-                    </a>
-                    <a
-                      href={`${API_BASE}/api/media/${jobData.id}/audio`}
-                      download
-                      className="btn-secondary"
-                    >
-                      <Volume2 size={16} /> Audio (.WAV)
-                    </a>
+                      {shareCopied ? <Check size={16} /> : <Share2 size={16} color="var(--accent-cyan)" />}
+                      {shareCopied ? 'Link Copied!' : 'Share on Mobile'}
+                    </button>
+                  </div>
+
+                  {/* Multi-Format Studio Exports Deck */}
+                  <div className="exports-deck">
+                    <div className="exports-deck-title">
+                      <Download size={16} color="var(--accent-emerald)" /> Studio Exports & Downloads
+                    </div>
+                    <div className="exports-grid">
+                      <a
+                        href={`${API_BASE}/api/media/${jobData.id}/dubbed_video`}
+                        download
+                        className="export-tile"
+                      >
+                        <div className="export-tile-icon" style={{ color: 'var(--accent-emerald)' }}>
+                          <Video size={16} /> Dubbed MP4
+                        </div>
+                        <div className="export-tile-sub">Full 1080p Video</div>
+                      </a>
+
+                      <a
+                        href={`${API_BASE}/api/media/${jobData.id}/mp3`}
+                        download
+                        className="export-tile"
+                      >
+                        <div className="export-tile-icon" style={{ color: 'var(--accent-cyan)' }}>
+                          <Volume2 size={16} /> Voice MP3
+                        </div>
+                        <div className="export-tile-sub">192k Audio Track</div>
+                      </a>
+
+                      <a
+                        href={`${API_BASE}/api/media/${jobData.id}/music`}
+                        download
+                        className="export-tile"
+                      >
+                        <div className="export-tile-icon" style={{ color: 'var(--accent-purple)' }}>
+                          <Music2 size={16} /> Music / SFX
+                        </div>
+                        <div className="export-tile-sub">Isolated Ambience</div>
+                      </a>
+
+                      <a
+                        href={`${API_BASE}/api/media/${jobData.id}/subtitles`}
+                        download
+                        className="export-tile"
+                      >
+                        <div className="export-tile-icon" style={{ color: 'var(--accent-amber)' }}>
+                          <FileText size={16} /> Subtitles (.SRT)
+                        </div>
+                        <div className="export-tile-sub">Standard timed SRT</div>
+                      </a>
+
+                      <a
+                        href={`${API_BASE}/api/media/${jobData.id}/vtt`}
+                        download
+                        className="export-tile"
+                      >
+                        <div className="export-tile-icon" style={{ color: '#38bdf8' }}>
+                          <FileText size={16} /> WebVTT (.VTT)
+                        </div>
+                        <div className="export-tile-sub">HTML5 Video Subtitles</div>
+                      </a>
+
+                      <a
+                        href={`${API_BASE}/api/media/${jobData.id}/transcript_txt`}
+                        download
+                        className="export-tile"
+                      >
+                        <div className="export-tile-icon" style={{ color: 'var(--text-secondary)' }}>
+                          <FileAudio size={16} /> Transcript (.TXT)
+                        </div>
+                        <div className="export-tile-sub">Plain Text Script</div>
+                      </a>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1325,7 +1732,8 @@ export default function App() {
               <table className="segment-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '60px' }}>#</th>
+                    <th style={{ width: '45px' }}>#</th>
+                    <th style={{ width: '120px' }}>Speaker</th>
                     <th style={{ width: '130px' }}>Time</th>
                     <th>Original Spoken Speech</th>
                     <th>Translated Speech ({selectedLangInfo.name})</th>
@@ -1335,6 +1743,27 @@ export default function App() {
                   {editableSegments.map((seg, idx) => (
                     <tr key={seg.id || idx}>
                       <td style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{idx + 1}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="speaker-badge"
+                          style={{
+                            background: (seg.speaker_id === 2 || seg.speaker === 'Speaker 2') ? 'rgba(168, 85, 247, 0.2)' : 'rgba(6, 182, 212, 0.2)',
+                            color: (seg.speaker_id === 2 || seg.speaker === 'Speaker 2') ? 'var(--accent-purple)' : 'var(--accent-cyan)',
+                            borderColor: (seg.speaker_id === 2 || seg.speaker === 'Speaker 2') ? 'var(--accent-purple)' : 'var(--accent-cyan)',
+                            cursor: 'pointer'
+                          }}
+                          onClick={() => {
+                            const nextId = (seg.speaker_id === 2 || seg.speaker === 'Speaker 2') ? 1 : 2;
+                            setEditableSegments(prev =>
+                              prev.map((s, i) => (i === idx ? { ...s, speaker_id: nextId, speaker: `Speaker ${nextId}` } : s))
+                            );
+                          }}
+                          title="Click to toggle speaker turn between Speaker 1 and Speaker 2"
+                        >
+                          <Mic size={11} /> {seg.speaker || `Speaker ${seg.speaker_id || 1}`}
+                        </button>
+                      </td>
                       <td>
                         <span className="status-pill" style={{ padding: '2px 8px', fontSize: '0.75rem' }}>
                           <Clock size={11} /> {seg.start.toFixed(1)}s - {seg.end.toFixed(1)}s
@@ -1702,6 +2131,164 @@ export default function App() {
             >
               Got it!
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Viral Shorts & Reels Auto-Clipper Modal */}
+      {showShortsModal && (
+        <div className="modal-backdrop" onClick={() => setShowShortsModal(false)}>
+          <div className="modal-card" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Scissors size={22} color="var(--accent-rose)" />
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>9:16 Shorts & Reels Clipper</h3>
+              </div>
+              <button
+                type="button"
+                className="status-pill"
+                style={{ cursor: 'pointer', background: 'transparent' }}
+                onClick={() => setShowShortsModal(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {shortGeneratedUrl ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'center' }}>
+                <div style={{ fontSize: '0.88rem', color: 'var(--accent-emerald)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <CheckCircle size={18} /> Vertical Short Ready!
+                </div>
+
+                <video
+                  src={shortGeneratedUrl}
+                  controls
+                  autoPlay
+                  className="shorts-video-preview"
+                />
+
+                <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
+                  <a
+                    href={shortGeneratedUrl}
+                    download="dubbed_short_9x16.mp4"
+                    className="btn-primary"
+                    style={{
+                      flex: 1,
+                      background: 'linear-gradient(135deg, var(--accent-rose), var(--accent-purple))',
+                      textDecoration: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <Download size={18} /> Download Short (.MP4)
+                  </a>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setShortGeneratedUrl(null)}
+                  >
+                    Trim Again
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  Automatically re-crop your video into a 9:16 vertical layout (1080x1920) with cinematic blurred padding and burned-in kinetic captions for YouTube Shorts, Instagram Reels, and TikTok.
+                </p>
+
+                {/* Start Time Controller */}
+                <div className="input-group" style={{ marginBottom: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <label className="input-label" style={{ marginBottom: 0 }}>
+                      <Clock size={14} color="var(--accent-cyan)" /> Clip Start Time
+                    </label>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--accent-cyan)' }}>
+                      {Math.floor(shortsStartTime / 60)}:{(shortsStartTime % 60).toFixed(0).padStart(2, '0')} ({shortsStartTime}s)
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max={Math.max(1, Math.floor((videoPlayerDuration || jobData?.result?.video_duration || 60) - shortsDuration))}
+                    step="1"
+                    value={shortsStartTime}
+                    onChange={(e) => setShortsStartTime(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--accent-cyan)' }}
+                  />
+                </div>
+
+                {/* Duration Presets */}
+                <div>
+                  <label className="input-label" style={{ marginBottom: '6px' }}>
+                    Target Short Duration
+                  </label>
+                  <div className="shorts-preset-pills">
+                    {[
+                      { sec: 15, label: '15s (Stories)' },
+                      { sec: 30, label: '30s (Reels)' },
+                      { sec: 60, label: '60s (Shorts)' },
+                    ].map((p) => (
+                      <button
+                        key={p.sec}
+                        type="button"
+                        className={`shorts-preset-pill ${shortsDuration === p.sec ? 'active' : ''}`}
+                        onClick={() => setShortsDuration(p.sec)}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Window Preview Banner */}
+                <div style={{
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '12px',
+                  fontSize: '0.82rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Trim Window:</span>
+                  <strong style={{ color: 'var(--text-primary)' }}>
+                    {shortsStartTime}s → {shortsStartTime + shortsDuration}s ({shortsDuration}s Total)
+                  </strong>
+                </div>
+
+                {shortError && (
+                  <div style={{ color: 'var(--accent-rose)', fontSize: '0.82rem', background: 'rgba(244, 63, 94, 0.15)', padding: '10px', borderRadius: 'var(--radius-sm)' }}>
+                    {shortError}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleGenerateShort}
+                  disabled={isGeneratingShort}
+                  style={{
+                    background: 'linear-gradient(135deg, var(--accent-rose), var(--accent-purple))',
+                    boxShadow: '0 4px 15px rgba(244, 63, 94, 0.3)',
+                    gap: '8px'
+                  }}
+                >
+                  {isGeneratingShort ? (
+                    <>
+                      <RefreshCw size={17} className="spin" /> Rendering 9:16 Short & Captions...
+                    </>
+                  ) : (
+                    <>
+                      <Scissors size={17} /> Render 9:16 Vertical Short
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

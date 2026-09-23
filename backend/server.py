@@ -41,6 +41,7 @@ from backend.dubbing_engine import (
     LANGUAGES,
     DubbingPipeline,
     detect_compute_device,
+    export_vertical_short,
     get_media_duration,
     run_full_pipeline,
 )
@@ -136,6 +137,8 @@ def save_jobs_history():
                 "enable_ducking": job.get("enable_ducking", True),
                 "ducking_volume": job.get("ducking_volume", 0.15),
                 "keep_original": job.get("keep_original", True),
+                "isolate_vocals": job.get("isolate_vocals", False),
+                "voice_map": job.get("voice_map"),
                 "status": job.get("status"),
                 "stage": job.get("stage"),
                 "progress": job.get("progress"),
@@ -242,6 +245,8 @@ async def run_pipeline_task(job_id: str):
             enable_ducking=job["enable_ducking"],
             ducking_volume=job["ducking_volume"],
             keep_original=job["keep_original"],
+            isolate_vocals=job.get("isolate_vocals", False),
+            voice_map=job.get("voice_map"),
             groq_api_key=job.get("groq_api_key"),
             on_progress=on_progress,
         )
@@ -483,6 +488,8 @@ async def create_dub_job(
     enable_ducking: bool = Form(True),
     ducking_volume: float = Form(0.15),
     keep_original: bool = Form(True),
+    isolate_vocals: bool = Form(False),
+    voice_map: Optional[str] = Form(None),
     user_id: Optional[str] = Form(None),
     groq_api_key: Optional[str] = Form(None),
 ):
@@ -495,6 +502,13 @@ async def create_dub_job(
     parsed_terms = []
     if protected_terms:
         parsed_terms = [t.strip() for t in re.split(r"[,;\n]", protected_terms) if t.strip()]
+
+    parsed_voice_map = None
+    if voice_map:
+        try:
+            parsed_voice_map = json.loads(voice_map)
+        except Exception:
+            parsed_voice_map = None
 
     job_id = uuid.uuid4().hex[:12]
     job_dir = OUTPUT_DIR / job_id
@@ -525,6 +539,8 @@ async def create_dub_job(
         "enable_ducking": enable_ducking,
         "ducking_volume": ducking_volume,
         "keep_original": keep_original,
+        "isolate_vocals": isolate_vocals,
+        "voice_map": parsed_voice_map,
         "user_id": user_id,
         "groq_api_key": groq_api_key or os.environ.get("GROQ_API_KEY"),
         "status": "queued",
@@ -651,9 +667,59 @@ async def update_segments(job_id: str, payload: Dict[str, Any]):
     return {"message": "Segments updated and dubbed video re-rendered successfully!"}
 
 
+@app.post("/api/jobs/{job_id}/generate-short")
+async def generate_short(job_id: str, payload: Optional[Dict[str, Any]] = None):
+    """
+    Render a 9:16 vertical short (1080x1920) with blurred background padding
+    and burned-in kinetic styled captions for YouTube Shorts, Reels, and TikTok.
+    """
+    job = JOBS.get(job_id)
+    if not job or job.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="Job must be completed to generate vertical shorts.")
+
+    data = payload or {}
+    start_time = float(data.get("start_time", 0.0))
+    duration = float(data.get("duration", 30.0))
+
+    job_dir = OUTPUT_DIR / job_id
+    target_lang = job.get("target_lang", "hi")
+    dubbed_video = job_dir / f"dubbed_{target_lang}.mp4"
+    if not dubbed_video.exists():
+        candidates = list(job_dir.glob("dubbed_*.mp4"))
+        if candidates:
+            dubbed_video = candidates[0]
+        else:
+            raise HTTPException(status_code=404, detail="Dubbed video not found.")
+
+    srt_path = job_dir / f"subtitles_{target_lang}.srt"
+    if not srt_path.exists():
+        candidates = list(job_dir.glob("*.srt"))
+        if candidates:
+            srt_path = candidates[0]
+        else:
+            raise HTTPException(status_code=404, detail="Subtitles not found.")
+
+    output_short = job_dir / "vertical_short.mp4"
+    await asyncio.to_thread(
+        export_vertical_short,
+        dubbed_video,
+        dubbed_video,
+        srt_path,
+        output_short,
+        start_time=start_time,
+        duration=duration,
+    )
+
+    return {
+        "status": "success",
+        "message": "Vertical short generated successfully!",
+        "short_url": f"/api/media/{job_id}/short",
+    }
+
+
 @app.get("/api/media/{job_id}/{media_type}")
 def get_media(job_id: str, media_type: str):
-    """Serve media files: dubbed video, source video, subtitles, or master audio."""
+    """Serve media files: dubbed video, source video, subtitles, MP3, isolated music, VTT, or shorts."""
     job = JOBS.get(job_id)
     job_dir = OUTPUT_DIR / job_id
 
@@ -682,6 +748,52 @@ def get_media(job_id: str, media_type: str):
         return FileResponse(
             candidates[0], media_type="text/plain", filename=candidates[0].name
         )
+
+    elif media_type == "vtt":
+        candidates = list(job_dir.glob("*.vtt"))
+        if not candidates:
+            raise HTTPException(status_code=404, detail="WebVTT subtitles not found.")
+        return FileResponse(
+            candidates[0], media_type="text/vtt", filename=candidates[0].name
+        )
+
+    elif media_type == "transcript_txt":
+        candidates = list(job_dir.glob("transcript_*.txt")) + list(job_dir.glob("*.txt"))
+        if not candidates:
+            raise HTTPException(status_code=404, detail="Transcript text file not found.")
+        return FileResponse(
+            candidates[0], media_type="text/plain", filename=candidates[0].name
+        )
+
+    elif media_type == "mp3":
+        mp3_candidates = [
+            job_dir / "dubbed_speech.mp3",
+            job_dir / f"dubbed_{job.get('target_lang', 'hi')}.mp3" if job else None,
+        ]
+        for m in mp3_candidates:
+            if m and m.exists():
+                return FileResponse(m, media_type="audio/mpeg", filename=m.name)
+        for a in [job_dir / "work" / "dubbed_ducked_master.wav", job_dir / "work" / "dubbed_speech.wav"]:
+            if a.exists():
+                return FileResponse(a, media_type="audio/wav", filename="dubbed_speech.wav")
+        raise HTTPException(status_code=404, detail="MP3 speech track not found.")
+
+    elif media_type == "music":
+        music_candidates = [
+            job_dir / "isolated_music.mp3",
+            job_dir / "work" / "isolated_music.wav",
+        ]
+        for m in music_candidates:
+            if m.exists():
+                m_type = "audio/mpeg" if m.suffix == ".mp3" else "audio/wav"
+                return FileResponse(m, media_type=m_type, filename=m.name)
+        raise HTTPException(status_code=404, detail="Isolated music track not found.")
+
+    elif media_type == "short":
+        short_file = job_dir / "vertical_short.mp4"
+        if not short_file.exists():
+            raise HTTPException(status_code=404, detail="Vertical short not generated yet.")
+        return FileResponse(short_file, media_type="video/mp4", filename="vertical_short.mp4")
 
     elif media_type == "audio":
         audio_candidates = [

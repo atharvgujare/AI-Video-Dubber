@@ -361,6 +361,111 @@ def transcribe_with_groq(
     return extracted, det_lang
 
 
+def assign_speaker_turns(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Assign speaker labels (Speaker 1, Speaker 2, ...) based on conversational pauses and turns."""
+    if not segments:
+        return segments
+    curr_speaker = 1
+    for i, seg in enumerate(segments):
+        if i > 0:
+            gap = seg["start"] - segments[i - 1]["end"]
+            if gap > 0.75:
+                curr_speaker = 2 if curr_speaker == 1 else 1
+        seg["speaker"] = f"Speaker {curr_speaker}"
+        seg["speaker_id"] = curr_speaker
+    return segments
+
+
+def export_ass_captions(srt_path: Path, ass_path: Path):
+    """Generate modern, high-contrast dynamic ASS subtitles with yellow highlights for vertical Shorts."""
+    header = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,66,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,40,40,320,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    lines = [header]
+    if srt_path.exists():
+        content = srt_path.read_text(encoding="utf-8", errors="ignore")
+        blocks = content.strip().split("\n\n")
+        for b in blocks:
+            parts = b.strip().split("\n")
+            if len(parts) >= 3:
+                timing = parts[1]
+                text = " ".join(parts[2:]).strip()
+                m = re.match(r"(\d+:\d+:\d+),(\d+)\s*-->\s*(\d+:\d+:\d+),(\d+)", timing)
+                if m:
+                    s_time = f"{m.group(1)[1:]}.{m.group(2)[:2]}"
+                    e_time = f"{m.group(3)[1:]}.{m.group(4)[:2]}"
+                    clean_text = text.replace("{", "").replace("}", "")
+                    lines.append(f"Dialogue: 0,{s_time},{e_time},Default,,0,0,0,,{clean_text}\n")
+    ass_path.write_text("".join(lines), encoding="utf-8")
+
+
+def export_vertical_short(
+    video_path: Path,
+    audio_path: Path,
+    srt_path: Path,
+    output_short_path: Path,
+    start_time: float = 0.0,
+    duration: float = 30.0,
+) -> Path:
+    """
+    Render a 9:16 vertical short (1080x1920) with blurred background padding
+    and burned-in kinetic styled captions for YouTube Shorts, Reels, and TikTok.
+    """
+    ass_path = output_short_path.parent / "short_captions.ass"
+    export_ass_captions(srt_path, ass_path)
+
+    escaped_ass = ass_path.as_posix().replace(":", r"\:")
+    filter_complex = (
+        f"[0:v]split=2[bg_in][fg_in];"
+        f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg];"
+        f"[fg_in]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2,subtitles='{escaped_ass}'[v]"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_time),
+        "-t", str(duration),
+        "-i", str(video_path),
+        "-ss", str(start_time),
+        "-t", str(duration),
+        "-i", str(audio_path),
+        "-filter_complex", filter_complex,
+        "-map", "[v]",
+        "-map", "1:a:0",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "22",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-shortest",
+        str(output_short_path),
+    ]
+    try:
+        run_ffmpeg(cmd)
+    except Exception as err:
+        logger.warning(f"Short rendering with subtitles filter failed ({err}), falling back to simple crop")
+        filter_simple = (
+            f"[0:v]split=2[bg_in][fg_in];"
+            f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg];"
+            f"[fg_in]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v]"
+        )
+        cmd[7] = filter_simple
+        run_ffmpeg(cmd)
+
+    return output_short_path
+
+
 class DubbingPipeline:
     def __init__(
         self,
@@ -510,6 +615,8 @@ class DubbingPipeline:
                         "text": text,
                     }
                 )
+
+        extracted = assign_speaker_turns(extracted)
 
         self.report(
             "transcription",
@@ -722,20 +829,24 @@ class DubbingPipeline:
             }
 
     async def generate_tts_parallel(
-        self, segments: List[Dict[str, Any]], voice: str
+        self,
+        segments: List[Dict[str, Any]],
+        voice: str,
+        voice_map: Optional[Dict[str, str]] = None,
     ) -> List[Dict[str, Any]]:
         self.report(
             "speech_synthesis",
             55.0,
-            f"Synthesizing {len(segments)} segments concurrently with voice '{voice}'...",
+            f"Synthesizing {len(segments)} segments concurrently with neural voices...",
         )
 
         sem = asyncio.Semaphore(6)  # Parallel synthesis workers
         total = len(segments)
-        tasks = [
-            self._generate_single_tts(seg, voice, idx, total, sem)
-            for idx, seg in enumerate(segments)
-        ]
+        tasks = []
+        for idx, seg in enumerate(segments):
+            seg_speaker = seg.get("speaker") or f"Speaker {seg.get('speaker_id', 1)}"
+            seg_voice = (voice_map or {}).get(seg_speaker) or voice
+            tasks.append(self._generate_single_tts(seg, seg_voice, idx, total, sem))
 
         completed = []
         for f in asyncio.as_completed(tasks):
@@ -924,6 +1035,100 @@ class DubbingPipeline:
 
         srt_path.write_text("\n".join(lines), encoding="utf-8")
 
+    def export_vtt(self, segments: List[Dict[str, Any]], vtt_path: Path):
+        """Export clean WebVTT subtitle file for HTML5 video players."""
+        def format_vtt_time(seconds: float) -> str:
+            millis = int(round((seconds - int(seconds)) * 1000))
+            seconds = int(seconds)
+            mins, secs = divmod(seconds, 60)
+            hours, mins = divmod(mins, 60)
+            return f"{hours:02d}:{mins:02d}:{secs:02d}.{millis:03d}"
+
+        lines = ["WEBVTT\n"]
+        for i, seg in enumerate(segments, 1):
+            text = seg.get("translated") or seg.get("text")
+            lines.append(f"{i}")
+            lines.append(f"{format_vtt_time(seg['start'])} --> {format_vtt_time(seg['end'])}")
+            lines.append(text.strip())
+            lines.append("")
+
+        vtt_path.write_text("\n".join(lines), encoding="utf-8")
+
+    def export_mp3(self, wav_path: Path, mp3_path: Path):
+        """Convert WAV to lightweight high-quality 192k MP3."""
+        run_ffmpeg([
+            "ffmpeg", "-y",
+            "-i", str(wav_path),
+            "-c:a", "libmp3lame",
+            "-b:a", "192k",
+            str(mp3_path),
+        ])
+
+    def isolate_music_and_sfx(self, input_audio: Path, output_music: Path) -> Path:
+        """
+        Isolate background music, ambience, and sound effects by canceling center-panned speech.
+        Uses stereo side-channel extraction and harmonic bandpass filtering.
+        """
+        self.report("mastering", 88.0, "Isolating background music and sound effects...")
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(input_audio),
+            "-af", "stereotools=mlev=0.015625:slev=1.0,highpass=f=180,lowpass=f=3800",
+            "-ar", "48000",
+            "-ac", "2",
+            "-c:a", "pcm_s16le",
+            str(output_music),
+        ]
+        run_ffmpeg(cmd)
+        return output_music
+
+    def mix_dubbed_with_isolated_music(
+        self,
+        isolated_music_path: Path,
+        dubbed_wav_path: Path,
+        video_duration: float,
+        output_master_path: Path,
+        music_volume: float = 0.85,
+    ) -> Path:
+        """
+        Mix the clean dubbed speech track with the isolated music/SFX track
+        without ducking, keeping music pristine and crystal clear.
+        """
+        sample_rate = 48000
+        total_samples = int(video_duration * sample_rate)
+
+        # Load isolated music
+        music_arr = np.zeros((total_samples, 2), dtype=np.float32)
+        if isolated_music_path.exists():
+            with wave.open(str(isolated_music_path), "rb") as wf:
+                n_frames = min(wf.getnframes(), total_samples)
+                data = wf.readframes(n_frames)
+                frames = np.frombuffer(data, dtype=np.int16).reshape(-1, 2)
+                music_arr[:len(frames)] = frames.astype(np.float32) * music_volume
+
+        # Load dubbed speech
+        speech_arr = np.zeros((total_samples, 2), dtype=np.float32)
+        if dubbed_wav_path.exists():
+            with wave.open(str(dubbed_wav_path), "rb") as wf:
+                n_frames = min(wf.getnframes(), total_samples)
+                data = wf.readframes(n_frames)
+                frames = np.frombuffer(data, dtype=np.int16).reshape(-1, 2)
+                speech_arr[:len(frames)] = frames.astype(np.float32)
+
+        mixed = speech_arr + music_arr
+        peak = np.max(np.abs(mixed)) if len(mixed) > 0 else 0
+        if peak > 32767.0:
+            mixed = (mixed / peak) * 32000.0
+
+        mixed_int16 = mixed.astype(np.int16)
+        with wave.open(str(output_master_path), "wb") as wf:
+            wf.setnchannels(2)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(mixed_int16.tobytes())
+
+        return output_master_path
+
     def mux_video(
         self,
         video_path: Path,
@@ -1009,6 +1214,8 @@ async def run_full_pipeline(
     enable_ducking: bool = True,
     ducking_volume: float = 0.15,
     keep_original: bool = True,
+    isolate_vocals: bool = False,
+    voice_map: Optional[Dict[str, str]] = None,
     groq_api_key: Optional[str] = None,
     on_progress: Optional[Callable[[str, float, str, Optional[Dict[str, Any]]], None]] = None,
 ) -> Dict[str, Any]:
@@ -1044,10 +1251,18 @@ async def run_full_pipeline(
     srt_path = output_dir / f"subtitles_{target_lang}.srt"
     await asyncio.to_thread(pipeline.export_srt, translated, srt_path)
 
-    # 4. Synthesize TTS (native async concurrent Edge TTS workers with rate pacing)
+    # Save WebVTT & TXT formats
+    vtt_path = output_dir / f"subtitles_{target_lang}.vtt"
+    await asyncio.to_thread(pipeline.export_vtt, translated, vtt_path)
+
+    txt_path = output_dir / f"transcript_{target_lang}.txt"
+    txt_content = "\n".join([f"[{s.get('speaker', 'Speaker')}]: {s.get('translated', '')}" for s in translated])
+    txt_path.write_text(txt_content, encoding="utf-8")
+
+    # 4. Synthesize TTS (with multi-speaker voice routing)
     lang_config = LANGUAGES.get(target_lang, LANGUAGES["hi"])
     voice_id = lang_config["voices"].get(voice_gender, {}).get("id") or lang_config["default_voice"]
-    fitted_segments = await pipeline.generate_tts_parallel(translated, voice_id)
+    fitted_segments = await pipeline.generate_tts_parallel(translated, voice_id, voice_map=voice_map)
 
     # 5. Build Timeline via NumPy (fast in thread)
     dubbed_raw_wav = output_dir / "work" / "dubbed_speech.wav"
@@ -1055,9 +1270,28 @@ async def run_full_pipeline(
         pipeline.build_audio_timeline_numpy, fitted_segments, video_duration, dubbed_raw_wav
     )
 
-    # 6. Apply Background Ducking (optional, studio quality)
+    # Export pure dubbed MP3
+    dubbed_mp3 = output_dir / "dubbed_speech.mp3"
+    await asyncio.to_thread(pipeline.export_mp3, dubbed_raw_wav, dubbed_mp3)
+
+    # 6. Apply Background Audio: Vocal Isolation vs Ducking
     final_audio = dubbed_raw_wav
-    if enable_ducking:
+    isolated_music_mp3 = None
+    if isolate_vocals:
+        isolated_music_wav = output_dir / "work" / "isolated_music.wav"
+        await asyncio.to_thread(pipeline.isolate_music_and_sfx, src_audio, isolated_music_wav)
+        isolated_music_mp3 = output_dir / "isolated_music.mp3"
+        await asyncio.to_thread(pipeline.export_mp3, isolated_music_wav, isolated_music_mp3)
+        master_music_wav = output_dir / "work" / "dubbed_music_isolated_master.wav"
+        await asyncio.to_thread(
+            pipeline.mix_dubbed_with_isolated_music,
+            isolated_music_wav,
+            dubbed_raw_wav,
+            video_duration,
+            master_music_wav,
+        )
+        final_audio = master_music_wav
+    elif enable_ducking:
         ducked_master = output_dir / "work" / "dubbed_ducked_master.wav"
         await asyncio.to_thread(
             pipeline.apply_ducking,
@@ -1083,14 +1317,22 @@ async def run_full_pipeline(
         subtitles_file=srt_path,
     )
 
+    # Detect all speakers in dialogue
+    detected_speakers = sorted(list({s.get("speaker", "Speaker 1") for s in translated}))
+
     return {
         "title": title,
         "video_duration": video_duration,
         "segments_count": len(translated),
         "video_file": str(final_mp4),
         "subtitles_file": str(srt_path),
+        "vtt_file": str(vtt_path),
         "audio_file": str(final_audio),
+        "mp3_file": str(dubbed_mp3),
+        "isolated_music_file": str(isolated_music_mp3) if isolated_music_mp3 else None,
+        "transcript_txt": str(txt_path),
         "translated_json": str(json_path),
         "segments": translated,
+        "speakers": detected_speakers,
         "detected_source_lang": pipeline.detected_source_lang,
     }

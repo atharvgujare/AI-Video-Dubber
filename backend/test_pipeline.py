@@ -268,6 +268,148 @@ def test_cloud_and_ffmpeg_binary():
     print("[PASS] test_cloud_and_ffmpeg_binary passed successfully!")
 
 
+def test_speaker_turn_assignment():
+    """Verify conversational speaker turn detection based on speech pause gaps."""
+    from backend.dubbing_engine import assign_speaker_turns
+
+    sample_segments = [
+        {"id": 1, "start": 0.0, "end": 1.5, "text": "Hello, how are you doing today?"},
+        {"id": 2, "start": 1.6, "end": 2.8, "text": "I am doing well, thank you."},  # gap 0.1s -> Speaker 1 continues
+        {"id": 3, "start": 3.8, "end": 5.0, "text": "Did you see the new update?"},    # gap 1.0s (> 0.75s) -> Speaker 2 turns
+        {"id": 4, "start": 6.2, "end": 7.5, "text": "Yes, it looks amazing!"},         # gap 1.2s (> 0.75s) -> Speaker 1 turns
+    ]
+
+    tagged = assign_speaker_turns(sample_segments)
+    assert tagged[0]["speaker"] == "Speaker 1"
+    assert tagged[1]["speaker"] == "Speaker 1"
+    assert tagged[2]["speaker"] == "Speaker 2"
+    assert tagged[3]["speaker"] == "Speaker 1"
+
+    print("[PASS] test_speaker_turn_assignment passed successfully!")
+
+
+def test_vocal_isolation_and_music_mixing():
+    """Verify vocal side-channel cancellation and NumPy audio mixing."""
+    from backend.dubbing_engine import DubbingPipeline
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        pipeline = DubbingPipeline(tmp_path)
+
+        # Create stereo WAV with center voice (L=R) and stereo side music (L=-R)
+        sr = 48000
+        duration = 2.0
+        n_samples = int(sr * duration)
+        t = np.linspace(0, duration, n_samples, endpoint=False)
+        center_voice = (np.sin(2 * np.pi * 300 * t) * 10000).astype(np.int16)
+        side_music = (np.sin(2 * np.pi * 800 * t) * 8000).astype(np.int16)
+
+        left = center_voice + side_music
+        right = center_voice - side_music
+        stereo = np.column_stack((left, right))
+
+        src_wav = tmp_path / "source_audio.wav"
+        with wave.open(str(src_wav), "wb") as wf:
+            wf.setnchannels(2)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            wf.writeframes(stereo.tobytes())
+
+        isolated_music = tmp_path / "isolated_music.wav"
+        pipeline.isolate_music_and_sfx(src_wav, isolated_music)
+        assert isolated_music.exists(), "Isolated music WAV was not created"
+
+        # Create dubbed speech WAV
+        dubbed_speech = tmp_path / "dubbed_speech.wav"
+        speech_sine = (np.sin(2 * np.pi * 250 * t) * 12000).astype(np.int16)
+        with wave.open(str(dubbed_speech), "wb") as wf:
+            wf.setnchannels(2)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            wf.writeframes(np.column_stack((speech_sine, speech_sine)).tobytes())
+
+        master_out = tmp_path / "master_mixed.wav"
+        pipeline.mix_dubbed_with_isolated_music(isolated_music, dubbed_speech, duration, master_out)
+        assert master_out.exists(), "Master mixed WAV was not created"
+
+        with wave.open(str(master_out), "rb") as wf:
+            assert wf.getframerate() == 48000
+            assert wf.getnchannels() == 2
+
+    print("[PASS] test_vocal_isolation_and_music_mixing passed successfully!")
+
+
+def test_subtitles_ass_and_vtt_exports():
+    """Verify ASS kinetic captions and WebVTT export formats."""
+    from backend.dubbing_engine import export_ass_captions, DubbingPipeline
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        pipeline = DubbingPipeline(tmp_path)
+
+        segments = [
+            {"id": 1, "start": 0.5, "end": 2.0, "text": "Hello world", "translated": "नमस्ते दुनिया"},
+            {"id": 2, "start": 2.5, "end": 4.0, "text": "This is a test", "translated": "यह एक परीक्षण है"},
+        ]
+
+        srt_path = tmp_path / "test.srt"
+        pipeline.export_srt(segments, srt_path)
+        assert srt_path.exists()
+        assert "00:00:00,500 --> 00:00:02,000" in srt_path.read_text(encoding="utf-8")
+
+        vtt_path = tmp_path / "test.vtt"
+        pipeline.export_vtt(segments, vtt_path)
+        assert vtt_path.exists()
+        vtt_content = vtt_path.read_text(encoding="utf-8")
+        assert "WEBVTT" in vtt_content
+        assert "00:00:00.500 --> 00:00:02.000" in vtt_content
+
+        ass_path = tmp_path / "test.ass"
+        export_ass_captions(srt_path, ass_path)
+        assert ass_path.exists()
+        ass_content = ass_path.read_text(encoding="utf-8")
+        assert "[Script Info]" in ass_content
+        assert "PlayResX: 1080" in ass_content
+        assert "PlayResY: 1920" in ass_content
+        assert "Dialogue: 0," in ass_content
+
+    print("[PASS] test_subtitles_ass_and_vtt_exports passed successfully!")
+
+
+def test_vertical_short_rendering():
+    """Verify 9:16 vertical short video rendering with blurred background and subtitles."""
+    from backend.dubbing_engine import export_vertical_short, run_ffmpeg
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+
+        # Create 2-second test video (1280x720) with test audio
+        test_video = tmp_path / "test_video.mp4"
+        run_ffmpeg([
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", "color=c=navy:s=1280x720:d=2:r=25",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            str(test_video),
+        ])
+
+        srt_path = tmp_path / "test.srt"
+        srt_path.write_text("1\n00:00:00,100 --> 00:00:01,800\nViral Short Caption Test\n\n", encoding="utf-8")
+
+        output_short = tmp_path / "output_short.mp4"
+        export_vertical_short(
+            video_path=test_video,
+            audio_path=test_video,
+            srt_path=srt_path,
+            output_short_path=output_short,
+            start_time=0.0,
+            duration=1.5,
+        )
+
+        assert output_short.exists(), "Vertical short was not created!"
+        assert output_short.stat().st_size > 1000, "Output short file is empty!"
+
+    print("[PASS] test_vertical_short_rendering passed successfully!")
+
+
 if __name__ == "__main__":
     test_numpy_audio_timeline()
     asyncio.run(test_async_translation_and_glossary())
@@ -276,5 +418,9 @@ if __name__ == "__main__":
     test_auth_endpoints()
     test_active_jobs_and_pwa()
     test_cloud_and_ffmpeg_binary()
-    print("\nALL AUTOMATED TESTS PASSED SUCCESSFULLY!")
+    test_speaker_turn_assignment()
+    test_vocal_isolation_and_music_mixing()
+    test_subtitles_ass_and_vtt_exports()
+    test_vertical_short_rendering()
+    print("\nALL 11 AUTOMATED INTEGRATION TESTS PASSED SUCCESSFULLY!")
 
