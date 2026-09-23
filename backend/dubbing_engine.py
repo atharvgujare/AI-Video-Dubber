@@ -506,8 +506,26 @@ class DubbingPipeline:
         self.report("ingestion", 7.0, f"Fetching YouTube metadata: {source_input}")
         output_template = str(self.work_dir / "source.%(ext)s")
 
+        # Check for cookies file or environment variable (useful on cloud hosts like Render)
+        cookie_path = None
+        for candidate in [
+            self.work_dir.parent / "cookies.txt",
+            Path("cookies.txt"),
+            Path(__file__).resolve().parent.parent / "cookies.txt",
+            Path(__file__).resolve().parent / "cookies.txt",
+        ]:
+            if candidate.exists() and candidate.is_file():
+                cookie_path = candidate
+                break
+
+        env_cookies = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_TXT")
+        if not cookie_path and env_cookies:
+            temp_cookie = self.work_dir / "yt_cookies.txt"
+            temp_cookie.write_text(env_cookies.strip(), encoding="utf-8")
+            cookie_path = temp_cookie
+
         ydl_opts = {
-            "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+            "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best/18/22",
             "outtmpl": output_template,
             "merge_output_format": "mp4",
             "noplaylist": True,
@@ -515,11 +533,32 @@ class DubbingPipeline:
             "no_warnings": True,
             "retries": 5,
             "fragment_retries": 5,
+            # Emulate mobile player clients (android, ios, mweb) which do not trigger
+            # YouTube bot sign-in challenges on cloud/datacenter IP addresses (e.g. Render/AWS)
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "ios", "mweb"]
+                }
+            },
         }
 
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(source_input, download=True)
-            title = info.get("title", "YouTube Video")
+        if cookie_path and cookie_path.exists():
+            ydl_opts["cookiefile"] = str(cookie_path)
+            logger.info(f"Using cookies file: {cookie_path}")
+
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(source_input, download=True)
+                title = info.get("title", "YouTube Video")
+        except Exception as exc:
+            err_msg = str(exc)
+            if "Sign in to confirm you" in err_msg or "bot" in err_msg.lower() or "cookies" in err_msg.lower():
+                raise RuntimeError(
+                    "YouTube requested bot verification on the cloud server. "
+                    "Tip: You can download the video directly and upload it using the 'Upload File' tab, "
+                    "or set a YOUTUBE_COOKIES environment variable in Render."
+                ) from exc
+            raise RuntimeError(f"YouTube download failed: {err_msg}") from exc
 
         target_file = self.work_dir / "source.mp4"
         if not target_file.exists():
