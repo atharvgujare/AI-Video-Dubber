@@ -274,6 +274,11 @@ export default function App() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [showInstallModal, setShowInstallModal] = useState(false);
+  const [showCookieModal, setShowCookieModal] = useState(false);
+  const [hasCookies, setHasCookies] = useState(false);
+  const [cookieInput, setCookieInput] = useState('');
+  const [cookieSaving, setCookieSaving] = useState(false);
+  const [cookieMsg, setCookieMsg] = useState('');
   const [copiedLanUrl, setCopiedLanUrl] = useState(false);
 
   // Auth form states
@@ -370,6 +375,55 @@ export default function App() {
         if (data.active_jobs) setActiveQueueJobs(data.active_jobs);
       })
       .catch(err => console.warn('Failed to load active queue', err));
+
+    fetch(`${API_BASE}/api/settings/cookies`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && typeof data.has_cookies === 'boolean') {
+          setHasCookies(data.has_cookies);
+        }
+      })
+      .catch(() => {});
+  };
+
+  const handleSaveCookies = async () => {
+    if (!cookieInput.trim()) {
+      setCookieMsg('Please paste cookies content first.');
+      return;
+    }
+    setCookieSaving(true);
+    setCookieMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/cookies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookies: cookieInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setHasCookies(true);
+        setCookieMsg('✅ Cookies saved! Cloud YouTube downloads are now enabled.');
+        setCookieInput('');
+      } else {
+        setCookieMsg(`❌ ${data.detail || 'Failed to save cookies.'}`);
+      }
+    } catch (err) {
+      setCookieMsg('❌ Network error while saving cookies.');
+    } finally {
+      setCookieSaving(false);
+    }
+  };
+
+  const handleRemoveCookies = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/cookies`, { method: 'DELETE' });
+      if (res.ok) {
+        setHasCookies(false);
+        setCookieMsg('Cookies removed.');
+      }
+    } catch (err) {
+      setCookieMsg('Failed to remove cookies.');
+    }
   };
 
   useEffect(() => {
@@ -787,6 +841,17 @@ export default function App() {
         {/* Compact Action Icon Buttons (Clean on all devices) */}
         <div className="header-actions">
           {/* Theme Selector */}
+          {/* YouTube Cloud Cookies Button */}
+          <button
+            type="button"
+            className="icon-btn"
+            title={hasCookies ? "YouTube Cookies Active" : "Setup YouTube Cookies for Cloud"}
+            onClick={() => setShowCookieModal(true)}
+            style={{ borderColor: hasCookies ? 'var(--accent-emerald)' : 'var(--border-subtle)' }}
+          >
+            <Shield size={18} color={hasCookies ? 'var(--accent-emerald)' : 'var(--accent-purple)'} />
+          </button>
+
           <button
             type="button"
             className="icon-btn"
@@ -1047,6 +1112,30 @@ export default function App() {
                         </button>
                       )}
                     </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', fontSize: '0.78rem' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Cloud downloads require YouTube session cookies
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowCookieModal(true)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: hasCookies ? 'var(--accent-emerald)' : 'var(--accent-cyan)',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontWeight: 600,
+                        padding: '2px 0'
+                      }}
+                    >
+                      <Shield size={12} />
+                      {hasCookies ? '✓ Cookies Active' : 'Setup Cookies'}
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -2289,6 +2378,104 @@ export default function App() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* YouTube Cloud Cookies Modal */}
+      {showCookieModal && (
+        <div className="modal-backdrop" onClick={() => setShowCookieModal(false)}>
+          <div className="modal-card" style={{ maxWidth: '520px' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Shield size={22} color="var(--accent-purple)" />
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>YouTube Cloud Cookies</h3>
+              </div>
+              <button
+                type="button"
+                className="status-pill"
+                style={{ cursor: 'pointer', background: 'transparent' }}
+                onClick={() => setShowCookieModal(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: 'var(--radius-sm)', background: hasCookies ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)', border: `1px solid ${hasCookies ? 'var(--accent-emerald)' : 'rgba(239, 68, 68, 0.3)'}` }}>
+              <span style={{ fontSize: '0.86rem', fontWeight: 600, color: hasCookies ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}>
+                {hasCookies ? '✅ YouTube Cookies Active (Cloud downloads enabled)' : '⚠️ No YouTube Cookies Configured'}
+              </span>
+            </div>
+
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <p>
+                <strong>Why is this needed?</strong> Because Render runs in AWS cloud datacenters, YouTube blocks downloads from cloud IPs with <em>"Sign in to confirm you're not a bot"</em> unless session cookies are provided.
+              </p>
+
+              <div style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                <strong style={{ color: 'var(--accent-cyan)' }}>🚀 Quick Alternative (100% Reliable, No Setup):</strong>
+                <p style={{ marginTop: '4px' }}>
+                  Use the <strong>"Upload File"</strong> tab! You can pick any video saved on your phone or computer. It uploads directly and never gets blocked by YouTube.
+                </p>
+              </div>
+
+              <div>
+                <strong>How to get YouTube cookies in 1 minute:</strong>
+                <ol style={{ paddingLeft: '20px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <li>Open Chrome/Edge on your PC and install: <a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-cyan)' }}>Get cookies.txt LOCALLY</a></li>
+                  <li>Go to <code>youtube.com</code> in your browser while signed in.</li>
+                  <li>Click the extension icon, click <strong>Export</strong>, and copy the text.</li>
+                  <li>Paste the text below and click <strong>Save Cookies</strong>.</li>
+                </ol>
+              </div>
+            </div>
+
+            <textarea
+              className="text-input"
+              rows={4}
+              placeholder="# Netscape HTTP Cookie File&#10;.youtube.com TRUE / FALSE ... paste exported cookies here"
+              value={cookieInput}
+              onChange={(e) => setCookieInput(e.target.value)}
+              style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}
+            />
+
+            {cookieMsg && (
+              <div style={{ fontSize: '0.82rem', color: cookieMsg.startsWith('✅') ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}>
+                {cookieMsg}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+              {hasCookies && (
+                <button
+                  type="button"
+                  className="status-pill"
+                  style={{ background: 'rgba(239, 68, 68, 0.2)', color: 'var(--accent-rose)', cursor: 'pointer' }}
+                  onClick={handleRemoveCookies}
+                >
+                  <Trash2 size={13} /> Remove Cookies
+                </button>
+              )}
+              <div style={{ display: 'flex', gap: '10px', marginLeft: 'auto' }}>
+                <button
+                  type="button"
+                  className="status-pill"
+                  style={{ cursor: 'pointer', background: 'transparent' }}
+                  onClick={() => setShowCookieModal(false)}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                  onClick={handleSaveCookies}
+                  disabled={cookieSaving}
+                >
+                  {cookieSaving ? 'Saving...' : 'Save Cookies'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

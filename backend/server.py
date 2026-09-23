@@ -872,6 +872,20 @@ def save_cookies(data: Dict[str, str]):
     return {"status": "success", "message": "YouTube cookies saved successfully! All cloud downloads will use these cookies."}
 
 
+@app.delete("/api/settings/cookies")
+def delete_cookies():
+    """Remove cookies file."""
+    candidates = [
+        OUTPUT_DIR / "cookies.txt",
+        BASE_DIR / "cookies.txt",
+        BASE_DIR / "backend" / "cookies.txt",
+    ]
+    for c in candidates:
+        if c.exists() and c.is_file():
+            c.unlink(missing_ok=True)
+    return {"status": "success", "message": "Cookies removed successfully."}
+
+
 # Serve frontend if built
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 if FRONTEND_DIST.exists():
