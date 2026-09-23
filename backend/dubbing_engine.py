@@ -533,27 +533,30 @@ class DubbingPipeline:
             "no_warnings": True,
             "retries": 5,
             "fragment_retries": 5,
+            "remote_components": ["ejs:github"],
         }
 
         if cookie_path and cookie_path.exists():
             base_ydl_opts["cookiefile"] = str(cookie_path)
             logger.info(f"Using cookies file: {cookie_path}")
-
-        # Multi-tier client strategy:
-        # Tier 1: visionos + android_vr + android (bypasses bot challenges and SABR format skips on cloud IPs)
-        # Tier 2: android + ios + mweb
-        # Tier 3: web_embedded
-        client_tiers = [
-            ["visionos", "android_vr", "android", "ios", "mweb"],
-            ["android", "ios", "mweb"],
-            ["web_embedded"],
-        ]
+            client_tiers = [
+                None,  # Default extraction with authenticated cookies
+                ["web_embedded", "mweb"],
+                ["visionos", "android_vr", "android", "ios", "mweb"],
+            ]
+        else:
+            client_tiers = [
+                ["visionos", "android_vr", "android", "ios", "mweb"],
+                ["android", "ios", "mweb"],
+                ["web_embedded"],
+            ]
 
         info = None
         last_exc = None
         for tier in client_tiers:
             tier_opts = dict(base_ydl_opts)
-            tier_opts["extractor_args"] = {"youtube": {"player_client": tier}}
+            if tier:
+                tier_opts["extractor_args"] = {"youtube": {"player_client": tier}}
             try:
                 with YoutubeDL(tier_opts) as ydl:
                     info = ydl.extract_info(source_input, download=True)
