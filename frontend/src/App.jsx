@@ -861,34 +861,13 @@ export default function App() {
           </div>
         </div>
 
-        {/* Compact Action Icon Buttons (Clean on all devices) */}
+        {/* Clean, Minimal Action Buttons */}
         <div className="header-actions">
-          {/* Theme Selector */}
-          {/* YouTube Cloud Cookies Button */}
-          <button
-            type="button"
-            className="icon-btn"
-            title={hasCookies ? "YouTube Cookies Active" : "Setup YouTube Cookies for Cloud"}
-            onClick={() => setShowCookieModal(true)}
-            style={{ borderColor: hasCookies ? 'var(--accent-emerald)' : 'var(--border-subtle)' }}
-          >
-            <Shield size={18} color={hasCookies ? 'var(--accent-emerald)' : 'var(--accent-purple)'} />
-          </button>
-
-          <button
-            type="button"
-            className="icon-btn"
-            title="Change Theme"
-            onClick={() => setShowThemeModal(true)}
-          >
-            <Palette size={18} />
-          </button>
-
           {/* Recent Projects Drawer Button */}
           <button
             type="button"
             className="icon-btn"
-            title="Saved Projects"
+            title="Saved Videos"
             onClick={() => setShowHistory(!showHistory)}
           >
             <Clock size={18} />
@@ -897,21 +876,21 @@ export default function App() {
             )}
           </button>
 
-          {/* Connect Phone / Install PWA */}
+          {/* Theme Selector */}
           <button
             type="button"
             className="icon-btn"
-            title="Install App / Connect Phone"
-            onClick={() => setShowPhoneModal(true)}
+            title="Theme"
+            onClick={() => setShowThemeModal(true)}
           >
-            <Smartphone size={18} color="var(--accent-cyan)" />
+            <Palette size={18} />
           </button>
 
-          {/* User Profile / Auth Button */}
+          {/* User Profile / Settings Button */}
           <button
             type="button"
             className="icon-btn"
-            title={currentUser ? currentUser.name : 'Sign In / Account'}
+            title={currentUser ? currentUser.name : 'Account & Settings'}
             onClick={() => setShowProfileModal(true)}
             style={{
               background: currentUser ? 'var(--primary-glow)' : 'var(--bg-secondary)',
@@ -951,9 +930,7 @@ export default function App() {
                 </div>
                 <div>
                   <h4 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700, color: 'var(--accent-rose)' }}>
-                    {errorMessage.toLowerCase().includes('bot') || errorMessage.toLowerCase().includes('verification') || errorMessage.toLowerCase().includes('cloud')
-                      ? 'YouTube Cloud Notice'
-                      : 'Notice'}
+                    Notice
                   </h4>
                   <p style={{ margin: '2px 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
                     {errorMessage}
@@ -970,7 +947,7 @@ export default function App() {
               </button>
             </div>
 
-            {(errorMessage.toLowerCase().includes('bot') || errorMessage.toLowerCase().includes('cloud') || errorMessage.toLowerCase().includes('cookies') || errorMessage.toLowerCase().includes('failed')) && (
+            {(errorMessage.toLowerCase().includes('youtube') || errorMessage.toLowerCase().includes('download') || errorMessage.toLowerCase().includes('failed') || errorMessage.toLowerCase().includes('restrict')) && (
               <div className="error-banner-actions">
                 <button
                   type="button"
@@ -983,16 +960,7 @@ export default function App() {
                     }, 100);
                   }}
                 >
-                  <UploadCloud size={15} /> Upload File Directly (100% Reliable)
-                </button>
-                <button
-                  type="button"
-                  className="error-action-btn secondary"
-                  onClick={() => {
-                    setShowCookieModal(true);
-                  }}
-                >
-                  <Shield size={14} /> Update Cookies
+                  <UploadCloud size={15} /> Select Video from Device (100% Reliable)
                 </button>
               </div>
             )}
@@ -1121,46 +1089,95 @@ export default function App() {
         <div className="studio-grid">
           {/* Left Column: Media Selection & Dubbing Language */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Step 1: Add Video */}
             <div className="glass-card">
               <div className="section-header">
                 <h2 className="section-title">
                   <Video size={19} color="var(--primary)" />
-                  1. Choose Video
+                  1. Add Video
                 </h2>
+                {uploadedFile ? (
+                  <span className="status-pill" style={{ color: 'var(--accent-emerald)', background: 'rgba(16, 185, 129, 0.15)' }}>
+                    ✓ File Ready
+                  </span>
+                ) : youtubeUrl ? (
+                  <span className="status-pill" style={{ color: 'var(--accent-cyan)', background: 'rgba(6, 182, 212, 0.15)' }}>
+                    ✓ Link Ready
+                  </span>
+                ) : null}
               </div>
 
-              {/* Tabs */}
-              <div className="tab-row">
-                <button
-                  type="button"
-                  className={`tab-btn ${inputTab === 'youtube' ? 'active' : ''}`}
-                  onClick={() => setInputTab('youtube')}
-                >
-                  <Video size={15} /> YouTube Link
-                </button>
+              {/* Segmented Control */}
+              <div className="tab-row" style={{ marginBottom: '14px' }}>
                 <button
                   type="button"
                   className={`tab-btn ${inputTab === 'upload' ? 'active' : ''}`}
                   onClick={() => setInputTab('upload')}
                 >
-                  <UploadCloud size={15} /> Upload File
+                  <UploadCloud size={16} /> Choose File
+                </button>
+                <button
+                  type="button"
+                  className={`tab-btn ${inputTab === 'youtube' ? 'active' : ''}`}
+                  onClick={() => setInputTab('youtube')}
+                >
+                  <Video size={16} /> YouTube Link
                 </button>
               </div>
 
-              {inputTab === 'youtube' ? (
-                <div className="input-group">
-                  <label className="input-label" htmlFor="youtube-input">
-                    <span>Paste YouTube URL</span>
-                    <span style={{ color: 'var(--accent-cyan)' }}>Auto-Downloaded</span>
-                  </label>
+              {inputTab === 'upload' ? (
+                <div
+                  className="drop-zone"
+                  onClick={() => document.getElementById('file-input').click()}
+                  style={{
+                    padding: '24px 16px',
+                    borderColor: uploadedFile ? 'var(--accent-emerald)' : 'var(--border-subtle)',
+                    background: uploadedFile ? 'rgba(16, 185, 129, 0.05)' : 'var(--bg-tertiary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {uploadedFile ? (
+                    <>
+                      <CheckCircle size={32} color="var(--accent-emerald)" />
+                      <p style={{ fontWeight: 700, marginTop: '6px', color: 'var(--text-primary)' }}>
+                        {uploadedFile.name}
+                      </p>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--accent-emerald)' }}>
+                        {(uploadedFile.size / (1024 * 1024)).toFixed(1)} MB • Tap to change file
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <UploadCloud size={32} color="var(--primary)" />
+                      <p style={{ fontWeight: 700, marginTop: '6px' }}>
+                        Tap to select video from your device
+                      </p>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        MP4, MOV, MKV, Shorts & Reels
+                      </span>
+                    </>
+                  )}
+                  <input
+                    id="file-input"
+                    type="file"
+                    accept="video/*"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      if (e.target.files?.[0]) setUploadedFile(e.target.files[0]);
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="input-group" style={{ marginBottom: 0 }}>
                   <div className="input-with-actions">
                     <input
                       id="youtube-input"
                       type="url"
                       className="text-input"
-                      placeholder="https://www.youtube.com/watch?v=..."
+                      placeholder="Paste YouTube or Shorts link here..."
                       value={youtubeUrl}
                       onChange={(e) => setYoutubeUrl(cleanYouTubeUrl(e.target.value))}
+                      style={{ fontSize: '0.9rem', padding: '12px 14px' }}
                     />
                     <div className="input-actions-group">
                       {youtubeUrl ? (
@@ -1184,73 +1201,8 @@ export default function App() {
                       )}
                     </div>
                   </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', fontSize: '0.78rem' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>
-                      Cloud downloads require YouTube session cookies
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setShowCookieModal(true)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: hasCookies ? 'var(--accent-emerald)' : 'var(--accent-cyan)',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        fontWeight: 600,
-                        padding: '2px 0'
-                      }}
-                    >
-                      <Shield size={12} />
-                      {hasCookies ? '✓ Cookies Active' : 'Setup Cookies'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  className="drop-zone"
-                  onClick={() => document.getElementById('file-input').click()}
-                >
-                  <UploadCloud size={34} color="var(--primary)" />
-                  <p style={{ fontWeight: 600 }}>
-                    {uploadedFile ? uploadedFile.name : 'Tap to select or drop video'}
-                  </p>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    Supports MP4, MOV, MKV (up to 2GB)
-                  </span>
-                  <input
-                    id="file-input"
-                    type="file"
-                    accept="video/*"
-                    style={{ display: 'none' }}
-                    onChange={(e) => {
-                      if (e.target.files?.[0]) setUploadedFile(e.target.files[0]);
-                    }}
-                  />
                 </div>
               )}
-
-              {/* Source Language */}
-              <div className="input-group" style={{ marginTop: '14px', marginBottom: 0 }}>
-                <label className="input-label">
-                  <span>Spoken Language in Video</span>
-                  <span style={{ color: 'var(--accent-cyan)' }}>Auto-Detects 99+ Languages</span>
-                </label>
-                <select
-                  className="text-input"
-                  value={sourceLang}
-                  onChange={(e) => setSourceLang(e.target.value)}
-                >
-                  {SOURCE_LANGUAGES.map((item) => (
-                    <option key={item.code} value={item.code}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
 
             {/* Language & Voice Selector */}
@@ -1390,6 +1342,49 @@ export default function App() {
 
                 {showAdvanced && (
                   <div className="accordion-content">
+                    {/* Original Spoken Language (Optional Override) */}
+                    <div className="input-group" style={{ marginBottom: '14px' }}>
+                      <label className="input-label">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.84rem' }}>
+                          <Globe size={14} color="var(--accent-cyan)" /> Original Video Language
+                        </span>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Auto-detects by default</span>
+                      </label>
+                      <select
+                        className="text-input"
+                        value={sourceLang}
+                        onChange={(e) => setSourceLang(e.target.value)}
+                        style={{ fontSize: '0.85rem' }}
+                      >
+                        {SOURCE_LANGUAGES.map((item) => (
+                          <option key={item.code} value={item.code}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* AI Transcription Model */}
+                    <div className="input-group" style={{ marginBottom: '14px' }}>
+                      <label className="input-label">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.84rem' }}>
+                          <Sparkles size={14} color="var(--accent-purple)" /> Transcription Model
+                        </span>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Fast & Accurate</span>
+                      </label>
+                      <select
+                        className="text-input"
+                        value={whisperModel}
+                        onChange={(e) => setWhisperModel(e.target.value)}
+                        style={{ fontSize: '0.85rem' }}
+                      >
+                        <option value="tiny">Tiny (Fastest)</option>
+                        <option value="base">Base (Recommended, Balanced)</option>
+                        <option value="small">Small (High Accuracy)</option>
+                        <option value="medium">Medium (Maximum Accuracy)</option>
+                      </select>
+                    </div>
+
                     {/* Multi-Speaker Dialogue Mode Switch */}
                     <div style={{
                       background: 'var(--bg-tertiary)',
