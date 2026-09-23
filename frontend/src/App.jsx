@@ -47,6 +47,29 @@ const THEMES = [
   { id: 'clean-light', name: 'Clean Light', icon: '☀️' },
 ];
 
+const POPULAR_LANGUAGES = [
+  { code: 'hi', name: 'Hindi', native: 'हिन्दी', flag: '🇮🇳' },
+  { code: 'mr', name: 'Marathi', native: 'मराठी', flag: '🇮🇳' },
+  { code: 'es', name: 'Spanish', native: 'Español', flag: '🇪🇸' },
+  { code: 'fr', name: 'French', native: 'Français', flag: '🇫🇷' },
+  { code: 'de', name: 'German', native: 'Deutsch', flag: '🇩🇪' },
+  { code: 'ja', name: 'Japanese', native: '日本語', flag: '🇯🇵' },
+  { code: 'ar', name: 'Arabic', native: 'العربية', flag: '🇸🇦' },
+  { code: 'en', name: 'English', native: 'English', flag: '🇬🇧' },
+];
+
+function cleanYouTubeUrl(url) {
+  if (!url) return '';
+  let trimmed = url.trim();
+  const shortsMatch = trimmed.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/);
+  if (shortsMatch) return `https://www.youtube.com/watch?v=${shortsMatch[1]}`;
+  const youtuMatch = trimmed.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  if (youtuMatch) return `https://www.youtube.com/watch?v=${youtuMatch[1]}`;
+  const watchMatch = trimmed.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  if (watchMatch) return `https://www.youtube.com/watch?v=${watchMatch[1]}`;
+  return trimmed;
+}
+
 function WaveformStudio({ segments = [], currentTime = 0, duration = 30, onSeek }) {
   const canvasRef = useRef(null);
 
@@ -655,7 +678,7 @@ export default function App() {
   const handlePasteUrl = async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text) setYoutubeUrl(text.trim());
+      if (text) setYoutubeUrl(cleanYouTubeUrl(text));
     } catch (err) {
       console.warn('Clipboard read error', err);
     }
@@ -819,7 +842,7 @@ export default function App() {
     }
   };
 
-  const selectedLangInfo = languages[targetLang] || { name: 'Hindi', native: 'हिन्दी' };
+  const selectedLangInfo = languages[targetLang] || POPULAR_LANGUAGES.find((p) => p.code === targetLang) || { name: 'Hindi', native: 'हिन्दी', flag: '🇮🇳' };
 
   return (
     <div className="app-layout">
@@ -920,11 +943,59 @@ export default function App() {
         )}
 
         {errorMessage && (
-          <div className="glass-card" style={{ borderColor: 'var(--accent-rose)', background: 'rgba(244, 63, 94, 0.1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: 'var(--accent-rose)' }}>
-              <AlertTriangle size={20} />
-              <span style={{ fontWeight: 600 }}>{errorMessage}</span>
+          <div className="error-banner-card">
+            <div className="error-banner-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div className="error-badge-icon">
+                  <AlertTriangle size={18} color="var(--accent-rose)" />
+                </div>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700, color: 'var(--accent-rose)' }}>
+                    {errorMessage.toLowerCase().includes('bot') || errorMessage.toLowerCase().includes('verification') || errorMessage.toLowerCase().includes('cloud')
+                      ? 'YouTube Cloud Notice'
+                      : 'Notice'}
+                  </h4>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                    {errorMessage}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="error-dismiss-btn"
+                onClick={() => setErrorMessage('')}
+                title="Dismiss"
+              >
+                <X size={16} />
+              </button>
             </div>
+
+            {(errorMessage.toLowerCase().includes('bot') || errorMessage.toLowerCase().includes('cloud') || errorMessage.toLowerCase().includes('cookies') || errorMessage.toLowerCase().includes('failed')) && (
+              <div className="error-banner-actions">
+                <button
+                  type="button"
+                  className="error-action-btn primary"
+                  onClick={() => {
+                    setInputTab('upload');
+                    setErrorMessage('');
+                    setTimeout(() => {
+                      document.getElementById('file-input')?.click();
+                    }, 100);
+                  }}
+                >
+                  <UploadCloud size={15} /> Upload File Directly (100% Reliable)
+                </button>
+                <button
+                  type="button"
+                  className="error-action-btn secondary"
+                  onClick={() => {
+                    setShowCookieModal(true);
+                  }}
+                >
+                  <Shield size={14} /> Update Cookies
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -1089,7 +1160,7 @@ export default function App() {
                       className="text-input"
                       placeholder="https://www.youtube.com/watch?v=..."
                       value={youtubeUrl}
-                      onChange={(e) => setYoutubeUrl(e.target.value)}
+                      onChange={(e) => setYoutubeUrl(cleanYouTubeUrl(e.target.value))}
                     />
                     <div className="input-actions-group">
                       {youtubeUrl ? (
@@ -1187,282 +1258,103 @@ export default function App() {
               <div className="section-header">
                 <h2 className="section-title">
                   <Globe size={19} color="var(--accent-purple)" />
-                  2. Choose Dubbing Language
+                  2. Choose Language & Voice
                 </h2>
-                <span className="status-pill" style={{ color: 'var(--accent-purple)' }}>
-                  {selectedLangInfo.name} ({selectedLangInfo.native})
+                <span className="status-pill" style={{ color: 'var(--accent-purple)', fontWeight: 600 }}>
+                  {selectedLangInfo.flag} {selectedLangInfo.name} ({selectedLangInfo.native})
                 </span>
               </div>
 
-              {/* Languages Grid */}
-              <div className="lang-grid">
-                {Object.entries(languages).map(([code, item]) => (
+              {/* Popular Languages Quick-Pills */}
+              <div className="popular-lang-grid">
+                {POPULAR_LANGUAGES.map((item) => (
                   <div
-                    key={code}
-                    className={`lang-card ${targetLang === code ? 'selected' : ''}`}
-                    onClick={() => setTargetLang(code)}
+                    key={item.code}
+                    className={`popular-lang-chip ${targetLang === item.code ? 'selected' : ''}`}
+                    onClick={() => setTargetLang(item.code)}
                   >
-                    <span className="lang-flag">{item.flag || '🌐'}</span>
-                    <span className="lang-name">{item.name}</span>
-                    <span className="lang-native">{item.native}</span>
+                    <span className="popular-chip-flag">{item.flag}</span>
+                    <div className="popular-chip-info">
+                      <span className="popular-chip-name">{item.name}</span>
+                      <span className="popular-chip-native">{item.native}</span>
+                    </div>
                   </div>
                 ))}
               </div>
 
-              {/* Voice Style (Single vs Multi-Speaker) */}
-              <div className="input-label" style={{ marginBottom: '8px' }}>
-                <span>Voice Style & Speakers</span>
+              {/* All Languages Dropdown */}
+              <div className="input-group" style={{ marginBottom: '14px' }}>
+                <select
+                  className="text-input"
+                  value={targetLang}
+                  onChange={(e) => setTargetLang(e.target.value)}
+                  style={{ fontSize: '0.88rem' }}
+                >
+                  <option value="" disabled>-- Or Select Any Supported Language --</option>
+                  {Object.entries(languages).map(([code, item]) => (
+                    <option key={code} value={code}>
+                      {item.flag || '🌐'} {item.name} ({item.native})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Voice Gender & Audition Row */}
+              <div className="modern-voice-row">
                 <button
                   type="button"
-                  className="status-pill"
-                  style={{ cursor: 'pointer', background: 'var(--primary-glow)', color: 'white' }}
+                  className={`voice-pill-btn ${voiceGender === 'female' && !enableMultiSpeaker ? 'selected' : ''}`}
+                  onClick={() => {
+                    setVoiceGender('female');
+                    setEnableMultiSpeaker(false);
+                  }}
+                >
+                  <span>👩 Female Voice</span>
+                </button>
+                <button
+                  type="button"
+                  className={`voice-pill-btn ${voiceGender === 'male' && !enableMultiSpeaker ? 'selected' : ''}`}
+                  onClick={() => {
+                    setVoiceGender('male');
+                    setEnableMultiSpeaker(false);
+                  }}
+                >
+                  <span>👨 Male Voice</span>
+                </button>
+                <button
+                  type="button"
+                  className="voice-audition-btn"
                   onClick={handleAuditionVoice}
+                  title="Listen to sample voice"
                 >
-                  <Headphones size={13} />
-                  {isPlayingTestVoice ? 'Playing...' : 'Listen Sample'}
+                  <Headphones size={14} />
+                  <span>{isPlayingTestVoice ? 'Playing...' : 'Sample'}</span>
                 </button>
               </div>
 
-              {/* Multi-Speaker Dialogue Mode Switch */}
-              <div style={{
-                background: 'var(--bg-tertiary)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                padding: '10px 14px',
-                marginBottom: '12px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Mic size={16} color="var(--accent-cyan)" />
-                  <div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                      Multi-Speaker Dialogue Mode
-                    </div>
-                    <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                      Assign distinct voices for two or more speakers in conversations
-                    </div>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={enableMultiSpeaker}
-                  onChange={(e) => setEnableMultiSpeaker(e.target.checked)}
-                  style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
-                />
-              </div>
-
-              {enableMultiSpeaker ? (
-                <div className="speaker-matrix-grid">
-                  <div className="speaker-card">
-                    <div className="speaker-card-header">
-                      <span style={{ color: 'var(--accent-cyan)' }}>🎙️ Speaker 1 (Lead)</span>
-                    </div>
-                    <div className="voice-selector" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-                      <button
-                        type="button"
-                        className={`voice-btn ${speaker1Gender === 'female' ? 'selected' : ''}`}
-                        onClick={() => setSpeaker1Gender('female')}
-                        style={{ padding: '6px' }}
-                      >
-                        <span style={{ fontSize: '0.82rem' }}>Female</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={`voice-btn ${speaker1Gender === 'male' ? 'selected' : ''}`}
-                        onClick={() => setSpeaker1Gender('male')}
-                        style={{ padding: '6px' }}
-                      >
-                        <span style={{ fontSize: '0.82rem' }}>Male</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="speaker-card">
-                    <div className="speaker-card-header">
-                      <span style={{ color: 'var(--accent-purple)' }}>🎙️ Speaker 2 (Co-Host)</span>
-                    </div>
-                    <div className="voice-selector" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-                      <button
-                        type="button"
-                        className={`voice-btn ${speaker2Gender === 'female' ? 'selected' : ''}`}
-                        onClick={() => setSpeaker2Gender('female')}
-                        style={{ padding: '6px' }}
-                      >
-                        <span style={{ fontSize: '0.82rem' }}>Female</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={`voice-btn ${speaker2Gender === 'male' ? 'selected' : ''}`}
-                        onClick={() => setSpeaker2Gender('male')}
-                        style={{ padding: '6px' }}
-                      >
-                        <span style={{ fontSize: '0.82rem' }}>Male</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="voice-selector">
-                  <button
-                    type="button"
-                    className={`voice-btn ${voiceGender === 'female' ? 'selected' : ''}`}
-                    onClick={() => setVoiceGender('female')}
-                  >
-                    <span>Female Voice</span>
-                    <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Natural</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`voice-btn ${voiceGender === 'male' ? 'selected' : ''}`}
-                    onClick={() => setVoiceGender('male')}
-                  >
-                    <span>Male Voice</span>
-                    <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Deep</span>
-                  </button>
-                </div>
-              )}
-
-              {/* More Settings Drawer */}
-              <div style={{ marginTop: '16px' }}>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ width: '100%', justifyContent: 'space-between' }}
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Sliders size={16} /> More Settings (Optional)
-                  </span>
-                  {showAdvanced ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                </button>
-
-                {showAdvanced && (
-                  <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {/* Vocal Stripping & Background Music Isolation */}
-                    <div style={{
-                      background: 'rgba(6, 182, 212, 0.08)',
-                      border: '1px solid rgba(6, 182, 212, 0.25)',
-                      borderRadius: 'var(--radius-md)',
-                      padding: '12px 14px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.85rem', color: 'var(--accent-cyan)' }}>
-                          <Music2 size={16} /> AI Vocal Stripping & Background Music Isolation
-                        </div>
-                        <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                          Cancels original speech to isolate background music and sound effects cleanly.
-                        </div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={isolateVocals}
-                        onChange={(e) => setIsolateVocals(e.target.checked)}
-                        style={{ width: '18px', height: '18px', accentColor: 'var(--accent-cyan)' }}
-                      />
-                    </div>
-
-                    {/* Burn Subtitles Toggle */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <label className="input-label" style={{ marginBottom: 0 }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <FileText size={15} color="var(--accent-purple)" />
-                          Add subtitles directly on video (for Shorts & Reels)
-                        </span>
-                      </label>
-                      <input
-                        type="checkbox"
-                        checked={burnSubtitles}
-                        onChange={(e) => setBurnSubtitles(e.target.checked)}
-                        style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
-                      />
-                    </div>
-
-                    {/* Words to keep unchanged */}
-                    <div className="input-group" style={{ marginBottom: 0 }}>
-                      <label className="input-label">
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <Shield size={15} color="var(--accent-emerald)" />
-                          Words to keep unchanged (Brand names, products)
-                        </span>
-                      </label>
-                      <input
-                        type="text"
-                        className="text-input"
-                        placeholder="e.g. iPhone, OpenAI, Python (comma-separated)"
-                        value={protectedTerms}
-                        onChange={(e) => setProtectedTerms(e.target.value)}
-                      />
-                    </div>
-
-                    {/* Auto-lower background music */}
-                    {!isolateVocals && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <label className="input-label" style={{ marginBottom: 0 }}>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <Music size={15} color="var(--accent-cyan)" /> Auto-soften background music while speaking
-                            </span>
-                          </label>
-                          <input
-                            type="checkbox"
-                            checked={enableDucking}
-                            onChange={(e) => setEnableDucking(e.target.checked)}
-                            style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
-                          />
-                        </div>
-                        {enableDucking && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <input
-                              type="range"
-                              min="0.05"
-                              max="0.4"
-                              step="0.05"
-                              value={duckingVolume}
-                              onChange={(e) => setDuckingVolume(parseFloat(e.target.value))}
-                              style={{ flex: 1, accentColor: 'var(--accent-cyan)' }}
-                            />
-                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', minWidth: '45px' }}>
-                              {Math.round(duckingVolume * 100)}%
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Multi-audio track */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <label className="input-label" style={{ marginBottom: 0 }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <Layers size={15} /> Keep original speech as secondary audio track
-                        </span>
-                      </label>
-                      <input
-                        type="checkbox"
-                        checked={keepOriginal}
-                        onChange={(e) => setKeepOriginal(e.target.checked)}
-                        style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Start Button */}
-              <div style={{ marginTop: '22px' }}>
+              {/* PRIMARY ACTION BUTTON: Placed Right Here! */}
+              <div style={{ marginTop: '14px', marginBottom: '10px' }}>
                 <button
                   type="button"
                   className="btn-primary"
                   onClick={handleStartDubbing}
                   disabled={isSubmitting}
                   style={{
+                    width: '100%',
+                    padding: '13px 20px',
+                    fontSize: '0.98rem',
+                    fontWeight: 700,
                     background: justSubmitted
                       ? 'var(--accent-emerald)'
-                      : 'linear-gradient(135deg, var(--primary), var(--accent-purple))'
+                      : 'linear-gradient(135deg, var(--primary), var(--accent-purple))',
+                    boxShadow: '0 4px 18px var(--primary-glow)',
+                    borderRadius: 'var(--radius-md)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '10px',
+                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
                   }}
                 >
                   {isSubmitting ? (
@@ -1479,6 +1371,217 @@ export default function App() {
                     </>
                   )}
                 </button>
+              </div>
+
+              {/* Studio & Audio Settings Collapsible Accordion (Optional) */}
+              <div className="studio-settings-accordion">
+                <button
+                  type="button"
+                  className="accordion-toggle-btn"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Sliders size={15} color="var(--accent-cyan)" />
+                    <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>Studio & Audio Settings</span>
+                    <span className="optional-tag">Optional</span>
+                  </div>
+                  {showAdvanced ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+
+                {showAdvanced && (
+                  <div className="accordion-content">
+                    {/* Multi-Speaker Dialogue Mode Switch */}
+                    <div style={{
+                      background: 'var(--bg-tertiary)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '10px 12px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Mic size={16} color="var(--accent-cyan)" />
+                        <div>
+                          <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                            Multi-Speaker Dialogue Mode
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                            Assign distinct voices for two or more speakers
+                          </div>
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={enableMultiSpeaker}
+                        onChange={(e) => setEnableMultiSpeaker(e.target.checked)}
+                        style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
+                      />
+                    </div>
+
+                    {enableMultiSpeaker && (
+                      <div className="speaker-matrix-grid">
+                        <div className="speaker-card">
+                          <div className="speaker-card-header">
+                            <span style={{ color: 'var(--accent-cyan)' }}>🎙️ Speaker 1 (Lead)</span>
+                          </div>
+                          <div className="voice-selector" style={{ gridTemplateColumns: 'repeat(2, 1fr)', marginBottom: 0 }}>
+                            <button
+                              type="button"
+                              className={`voice-btn ${speaker1Gender === 'female' ? 'selected' : ''}`}
+                              onClick={() => setSpeaker1Gender('female')}
+                              style={{ padding: '6px' }}
+                            >
+                              <span style={{ fontSize: '0.82rem' }}>Female</span>
+                            </button>
+                            <button
+                              type="button"
+                              className={`voice-btn ${speaker1Gender === 'male' ? 'selected' : ''}`}
+                              onClick={() => setSpeaker1Gender('male')}
+                              style={{ padding: '6px' }}
+                            >
+                              <span style={{ fontSize: '0.82rem' }}>Male</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="speaker-card">
+                          <div className="speaker-card-header">
+                            <span style={{ color: 'var(--accent-purple)' }}>🎙️ Speaker 2 (Co-Host)</span>
+                          </div>
+                          <div className="voice-selector" style={{ gridTemplateColumns: 'repeat(2, 1fr)', marginBottom: 0 }}>
+                            <button
+                              type="button"
+                              className={`voice-btn ${speaker2Gender === 'female' ? 'selected' : ''}`}
+                              onClick={() => setSpeaker2Gender('female')}
+                              style={{ padding: '6px' }}
+                            >
+                              <span style={{ fontSize: '0.82rem' }}>Female</span>
+                            </button>
+                            <button
+                              type="button"
+                              className={`voice-btn ${speaker2Gender === 'male' ? 'selected' : ''}`}
+                              onClick={() => setSpeaker2Gender('male')}
+                              style={{ padding: '6px' }}
+                            >
+                              <span style={{ fontSize: '0.82rem' }}>Male</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Vocal Stripping & Background Music Isolation */}
+                    <div style={{
+                      background: 'rgba(6, 182, 212, 0.08)',
+                      border: '1px solid rgba(6, 182, 212, 0.25)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '10px 12px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.84rem', color: 'var(--accent-cyan)' }}>
+                          <Music2 size={15} /> Vocal Stripping & Music Isolation
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                          Cancels original speech to cleanly isolate background music.
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={isolateVocals}
+                        onChange={(e) => setIsolateVocals(e.target.checked)}
+                        style={{ width: '18px', height: '18px', accentColor: 'var(--accent-cyan)' }}
+                      />
+                    </div>
+
+                    {/* Burn Subtitles Toggle */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="input-label" style={{ marginBottom: 0 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem' }}>
+                          <FileText size={15} color="var(--accent-purple)" />
+                          Burn subtitles directly on video (Shorts / Reels)
+                        </span>
+                      </label>
+                      <input
+                        type="checkbox"
+                        checked={burnSubtitles}
+                        onChange={(e) => setBurnSubtitles(e.target.checked)}
+                        style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
+                      />
+                    </div>
+
+                    {/* Words to keep unchanged */}
+                    <div className="input-group" style={{ marginBottom: 0 }}>
+                      <label className="input-label">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem' }}>
+                          <Shield size={14} color="var(--accent-emerald)" />
+                          Words to keep unchanged (Brands, product names)
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        className="text-input"
+                        placeholder="e.g. iPhone, OpenAI, Python"
+                        value={protectedTerms}
+                        onChange={(e) => setProtectedTerms(e.target.value)}
+                        style={{ fontSize: '0.85rem' }}
+                      />
+                    </div>
+
+                    {/* Auto-lower background music */}
+                    {!isolateVocals && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <label className="input-label" style={{ marginBottom: 0 }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem' }}>
+                              <Music size={14} color="var(--accent-cyan)" /> Auto-duck background music while speaking
+                            </span>
+                          </label>
+                          <input
+                            type="checkbox"
+                            checked={enableDucking}
+                            onChange={(e) => setEnableDucking(e.target.checked)}
+                            style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
+                          />
+                        </div>
+                        {enableDucking && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <input
+                              type="range"
+                              min="0.05"
+                              max="0.4"
+                              step="0.05"
+                              value={duckingVolume}
+                              onChange={(e) => setDuckingVolume(parseFloat(e.target.value))}
+                              style={{ flex: 1, accentColor: 'var(--accent-cyan)' }}
+                            />
+                            <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', minWidth: '40px' }}>
+                              {Math.round(duckingVolume * 100)}%
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Multi-audio track */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="input-label" style={{ marginBottom: 0 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem' }}>
+                          <Layers size={14} /> Keep original audio as secondary track
+                        </span>
+                      </label>
+                      <input
+                        type="checkbox"
+                        checked={keepOriginal}
+                        onChange={(e) => setKeepOriginal(e.target.checked)}
+                        style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

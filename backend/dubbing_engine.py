@@ -25,6 +25,15 @@ import numpy as np
 from faster_whisper import WhisperModel
 from yt_dlp import YoutubeDL
 
+# Add ~/.deno/bin and common JS runtime locations to PATH if present (for yt-dlp JS challenges on Linux)
+for p in [
+    Path.home() / ".deno" / "bin",
+    Path("/usr/local/bin"),
+    Path("/usr/bin"),
+]:
+    if p.exists() and str(p) not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{p}{os.pathsep}{os.environ.get('PATH', '')}"
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("DubbingEngine")
 
@@ -502,7 +511,22 @@ class DubbingPipeline:
             self.report("ingestion", 15.0, f"Local media loaded: {title}", {"title": title})
             return dest_video, title
 
-        # YouTube URL download via yt-dlp
+        # Clean & normalize YouTube URL (handles /shorts/, youtu.be, query params, etc.)
+        clean_url = source_input.strip()
+        shorts_m = re.search(r"youtube\.com/shorts/([a-zA-Z0-9_-]{11})", clean_url)
+        if shorts_m:
+            source_input = f"https://www.youtube.com/watch?v={shorts_m.group(1)}"
+        else:
+            youtu_m = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", clean_url)
+            if youtu_m:
+                source_input = f"https://www.youtube.com/watch?v={youtu_m.group(1)}"
+            else:
+                watch_m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", clean_url)
+                if watch_m:
+                    source_input = f"https://www.youtube.com/watch?v={watch_m.group(1)}"
+                else:
+                    source_input = clean_url
+
         self.report("ingestion", 7.0, f"Fetching YouTube metadata: {source_input}")
         output_template = str(self.work_dir / "source.%(ext)s")
 
@@ -511,11 +535,15 @@ class DubbingPipeline:
         for candidate in [
             self.work_dir.parent / "cookies.txt",
             Path("cookies.txt"),
-            Path(__file__).resolve().parent.parent / "cookies.txt",
+            Path("backend") / "cookies.txt",
+            Path("output") / "cookies.txt",
             Path(__file__).resolve().parent / "cookies.txt",
+            Path(__file__).resolve().parent.parent / "cookies.txt",
+            Path(__file__).resolve().parent.parent / "backend" / "cookies.txt",
+            Path(__file__).resolve().parent.parent / "output" / "cookies.txt",
         ]:
             if candidate.exists() and candidate.is_file():
-                cookie_path = candidate
+                cookie_path = candidate.resolve()
                 break
 
         env_cookies = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_TXT")
@@ -525,7 +553,7 @@ class DubbingPipeline:
             cookie_path = temp_cookie
 
         base_ydl_opts = {
-            "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best/18/22",
+            "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best/18/22/mp4/bestaudio/b",
             "outtmpl": output_template,
             "merge_output_format": "mp4",
             "noplaylist": True,
@@ -537,8 +565,11 @@ class DubbingPipeline:
         }
 
         if cookie_path and cookie_path.exists():
-            base_ydl_opts["cookiefile"] = str(cookie_path)
-            logger.info(f"Using cookies file: {cookie_path}")
+            # Copy to session cookie in work dir so yt-dlp never truncates or alters master cookies.txt
+            session_cookie = self.work_dir / "session_cookies.txt"
+            session_cookie.write_bytes(cookie_path.read_bytes())
+            base_ydl_opts["cookiefile"] = str(session_cookie)
+            logger.info(f"Using cookies copy: {session_cookie} from {cookie_path}")
             client_tiers = [
                 None,  # Default extraction with authenticated cookies
                 ["web_embedded", "mweb"],
