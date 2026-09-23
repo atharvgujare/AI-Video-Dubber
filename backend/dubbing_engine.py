@@ -524,7 +524,7 @@ class DubbingPipeline:
             temp_cookie.write_text(env_cookies.strip(), encoding="utf-8")
             cookie_path = temp_cookie
 
-        ydl_opts = {
+        base_ydl_opts = {
             "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best/18/22",
             "outtmpl": output_template,
             "merge_output_format": "mp4",
@@ -533,32 +533,48 @@ class DubbingPipeline:
             "no_warnings": True,
             "retries": 5,
             "fragment_retries": 5,
-            # Emulate mobile player clients (android, ios, mweb) which do not trigger
-            # YouTube bot sign-in challenges on cloud/datacenter IP addresses (e.g. Render/AWS)
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "ios", "mweb"]
-                }
-            },
         }
 
         if cookie_path and cookie_path.exists():
-            ydl_opts["cookiefile"] = str(cookie_path)
+            base_ydl_opts["cookiefile"] = str(cookie_path)
             logger.info(f"Using cookies file: {cookie_path}")
 
-        try:
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(source_input, download=True)
-                title = info.get("title", "YouTube Video")
-        except Exception as exc:
-            err_msg = str(exc)
+        # Multi-tier client strategy:
+        # Tier 1: visionos + android_vr + android (bypasses bot challenges and SABR format skips on cloud IPs)
+        # Tier 2: android + ios + mweb
+        # Tier 3: web_embedded
+        client_tiers = [
+            ["visionos", "android_vr", "android", "ios", "mweb"],
+            ["android", "ios", "mweb"],
+            ["web_embedded"],
+        ]
+
+        info = None
+        last_exc = None
+        for tier in client_tiers:
+            tier_opts = dict(base_ydl_opts)
+            tier_opts["extractor_args"] = {"youtube": {"player_client": tier}}
+            try:
+                with YoutubeDL(tier_opts) as ydl:
+                    info = ydl.extract_info(source_input, download=True)
+                    if info:
+                        last_exc = None
+                        break
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(f"Player client tier {tier} failed: {exc}. Trying next tier...")
+
+        if info is None and last_exc is not None:
+            err_msg = str(last_exc)
             if "Sign in to confirm you" in err_msg or "bot" in err_msg.lower() or "cookies" in err_msg.lower():
                 raise RuntimeError(
                     "YouTube requested bot verification on the cloud server. "
                     "Tip: You can download the video directly and upload it using the 'Upload File' tab, "
                     "or set a YOUTUBE_COOKIES environment variable in Render."
-                ) from exc
-            raise RuntimeError(f"YouTube download failed: {err_msg}") from exc
+                ) from last_exc
+            raise RuntimeError(f"YouTube download failed: {err_msg}") from last_exc
+
+        title = info.get("title", "YouTube Video") if info else "YouTube Video"
 
         target_file = self.work_dir / "source.mp4"
         if not target_file.exists():

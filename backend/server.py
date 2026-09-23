@@ -848,6 +848,30 @@ def get_version():
     }
 
 
+@app.get("/api/settings/cookies")
+def get_cookies_status():
+    """Check if YouTube cookies file or environment variable exists."""
+    candidates = [
+        OUTPUT_DIR / "cookies.txt",
+        BASE_DIR / "cookies.txt",
+        BASE_DIR / "backend" / "cookies.txt",
+    ]
+    has_file = any(c.exists() and c.is_file() for c in candidates)
+    has_env = bool(os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_TXT"))
+    return {"has_cookies": has_file or has_env, "source": "file" if has_file else ("env" if has_env else "none")}
+
+
+@app.post("/api/settings/cookies")
+def save_cookies(data: Dict[str, str]):
+    """Save raw cookies.txt content directly to output/cookies.txt."""
+    content = data.get("cookies", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Cookies content cannot be empty.")
+    cookie_file = OUTPUT_DIR / "cookies.txt"
+    cookie_file.write_text(content, encoding="utf-8")
+    return {"status": "success", "message": "YouTube cookies saved successfully! All cloud downloads will use these cookies."}
+
+
 # Serve frontend if built
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 if FRONTEND_DIST.exists():
